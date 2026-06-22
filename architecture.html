@@ -1,0 +1,1386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CodeLens - Architecture &amp; Design Document</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0f1a;
+            --bg-secondary: #111827;
+            --bg-card: #1e293b;
+            --bg-elevated: #1a2332;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --emerald: #34d399;
+            --emerald-dim: #059669;
+            --emerald-glow: rgba(52, 211, 153, 0.15);
+            --blue: #60a5fa;
+            --purple: #a78bfa;
+            --orange: #fb923c;
+            --red: #f87171;
+            --yellow: #fbbf24;
+            --border: #1e293b;
+            --border-light: #334155;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+        body {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.7;
+        }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+
+        /* ── Hero ── */
+        .hero {
+            text-align: center;
+            padding: 5rem 2rem 4rem;
+            background: linear-gradient(180deg, rgba(52,211,153,0.08) 0%, transparent 100%);
+            border-bottom: 1px solid var(--border);
+        }
+        .hero h1 {
+            font-size: 3.2rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--emerald), var(--blue));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .hero .tagline {
+            color: var(--text-secondary);
+            font-size: 1.15rem;
+            margin-top: 0.75rem;
+            max-width: 650px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .hero .badges {
+            display: flex;
+            gap: 0.6rem;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-top: 1.5rem;
+        }
+        .badge {
+            padding: 0.3rem 0.9rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .badge-green  { background: rgba(52,211,153,0.15); color: var(--emerald); }
+        .badge-blue   { background: rgba(96,165,250,0.15); color: var(--blue); }
+        .badge-purple { background: rgba(167,139,250,0.15); color: var(--purple); }
+
+        /* ── Nav ── */
+        nav {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            display: flex;
+            gap: 0.25rem;
+            flex-wrap: wrap;
+            justify-content: center;
+            padding: 0.75rem 1rem;
+            background: rgba(10,15,26,0.85);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+        }
+        nav a {
+            color: var(--text-muted);
+            text-decoration: none;
+            padding: 0.4rem 0.85rem;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        nav a:hover { background: var(--emerald-glow); color: var(--emerald); }
+
+        /* ── Layout ── */
+        .container { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem; }
+        section { margin: 3.5rem 0; }
+        h2 {
+            font-size: 1.7rem;
+            font-weight: 700;
+            color: var(--emerald);
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        h2 .num {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            background: var(--emerald-glow);
+            color: var(--emerald);
+            font-size: 0.85rem;
+            font-weight: 700;
+            flex-shrink: 0;
+        }
+        h3 { font-size: 1.2rem; color: var(--blue); margin: 1.5rem 0 0.75rem; }
+        h4 { font-size: 1rem; color: var(--purple); margin: 1.2rem 0 0.5rem; }
+        p { color: var(--text-secondary); margin: 0.6rem 0; }
+        strong { color: var(--text-primary); }
+
+        /* ── Cards ── */
+        .card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 1.75rem;
+            margin: 1.25rem 0;
+        }
+        .card-glow {
+            background: var(--bg-secondary);
+            border: 1px solid var(--emerald-dim);
+            border-radius: 14px;
+            padding: 1.75rem;
+            margin: 1.25rem 0;
+            box-shadow: 0 0 30px rgba(52,211,153,0.06);
+        }
+
+        /* ── Grid ── */
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
+        .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+        @media (max-width: 800px) {
+            .grid-2, .grid-3 { grid-template-columns: 1fr; }
+            .hero h1 { font-size: 2rem; }
+        }
+
+        /* ── Architecture Diagram ── */
+        .arch-diagram {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0;
+            padding: 2rem 0;
+        }
+        .arch-box {
+            padding: 0.9rem 2rem;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-align: center;
+            min-width: 260px;
+            transition: transform 0.2s;
+        }
+        .arch-box:hover { transform: translateY(-2px); }
+        .arch-box small { display: block; font-weight: 400; font-size: 0.75rem; opacity: 0.85; margin-top: 0.2rem; }
+        .box-user    { background: linear-gradient(135deg, #6366f1, #818cf8); color: white; }
+        .box-frontend { background: linear-gradient(135deg, #3b82f6, #60a5fa); color: white; }
+        .box-backend  { background: linear-gradient(135deg, #10b981, #34d399); color: white; }
+        .box-llm      { background: linear-gradient(135deg, #f59e0b, #fbbf24); color: #1e293b; }
+        .box-db        { background: linear-gradient(135deg, #64748b, #94a3b8); color: white; }
+        .box-github    { background: linear-gradient(135deg, #8b5cf6, #a78bfa); color: white; }
+        .arrow { color: var(--text-muted); font-size: 1.5rem; line-height: 1; padding: 0.3rem 0; }
+
+        /* ── Flow Steps ── */
+        .flow {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+            margin: 1.5rem 0;
+        }
+        .flow-step {
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: 8px;
+            padding: 0.6rem 1rem;
+            font-size: 0.82rem;
+            font-weight: 500;
+            text-align: center;
+            white-space: nowrap;
+        }
+        .flow-arrow { color: var(--emerald); font-size: 1.1rem; }
+
+        /* ── Code Block ── */
+        pre {
+            background: #0d1117;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 1.25rem 1.5rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            overflow-x: auto;
+            line-height: 1.7;
+            margin: 1rem 0;
+            color: #c9d1d9;
+        }
+        pre .comment { color: #8b949e; }
+        pre .keyword { color: #ff7b72; }
+        pre .string  { color: #a5d6ff; }
+        pre .func    { color: #d2a8ff; }
+        pre .type    { color: #79c0ff; }
+        pre .decor   { color: #ffa657; }
+        pre .emerald { color: #34d399; }
+
+        /* ── File Tree ── */
+        .file-tree {
+            background: #0d1117;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 1.25rem 1.5rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            line-height: 1.9;
+            overflow-x: auto;
+            margin: 1rem 0;
+        }
+        .file-tree .folder { color: var(--blue); font-weight: 600; }
+        .file-tree .file   { color: var(--text-secondary); }
+        .file-tree .hl     { color: var(--emerald); font-weight: 600; }
+        .file-tree .new    { color: var(--orange); font-weight: 600; }
+
+        /* ── Table ── */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+            font-size: 0.88rem;
+        }
+        th, td {
+            padding: 0.85rem 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+        th { color: var(--emerald); font-weight: 600; background: rgba(52,211,153,0.05); }
+        td { color: var(--text-secondary); }
+        tr:hover td { background: rgba(52,211,153,0.03); }
+        .win  { color: var(--emerald); font-weight: 600; }
+        .lose { color: var(--red); }
+
+        /* ── Feature Grid ── */
+        .feat-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1rem;
+            margin: 1.25rem 0;
+        }
+        .feat-item {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 1.25rem;
+        }
+        .feat-item h5 { color: var(--text-primary); font-size: 0.95rem; margin-bottom: 0.3rem; }
+        .feat-item p  { color: var(--text-secondary); font-size: 0.85rem; margin: 0; }
+        .feat-icon { color: var(--emerald); font-size: 1.3rem; margin-bottom: 0.4rem; }
+
+        /* ── Tech Grid ── */
+        .tech-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+            gap: 0.8rem;
+            margin: 1.25rem 0;
+        }
+        .tech-item {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.9rem;
+            text-align: center;
+        }
+        .tech-item .layer { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; }
+        .tech-item .name  { font-size: 0.92rem; font-weight: 600; color: var(--emerald); margin-top: 0.15rem; }
+
+        /* ── Why vs Why Not ── */
+        .vs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin: 1rem 0; }
+        @media (max-width: 700px) { .vs-grid { grid-template-columns: 1fr; } }
+        .vs-box { border-radius: 10px; padding: 1.25rem; }
+        .vs-yes { background: rgba(52,211,153,0.08); border: 1px solid var(--emerald-dim); }
+        .vs-no  { background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.3); }
+        .vs-box h5 { font-size: 0.9rem; margin-bottom: 0.5rem; }
+        .vs-yes h5 { color: var(--emerald); }
+        .vs-no  h5 { color: var(--red); }
+        .vs-box ul { list-style: none; padding: 0; }
+        .vs-box li { padding: 0.3rem 0; color: var(--text-secondary); font-size: 0.85rem; }
+        .vs-yes li::before { content: "✓ "; color: var(--emerald); font-weight: 700; }
+        .vs-no  li::before { content: "✗ "; color: var(--red); font-weight: 700; }
+
+        /* ── Separator ── */
+        hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
+
+        /* ── Footer ── */
+        footer {
+            text-align: center;
+            padding: 3rem 1rem;
+            border-top: 1px solid var(--border);
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+        footer strong { color: var(--emerald); }
+    </style>
+</head>
+<body>
+
+<!-- ════════════════ HERO ════════════════ -->
+<header class="hero">
+    <h1>CodeLens</h1>
+    <p class="tagline">Paste any GitHub URL. Get instant, AI-generated architecture docs — purpose, layout, tech stack, Mermaid diagrams, and interactive chat.</p>
+    <div class="badges">
+        <span class="badge badge-green">GitHub API Analysis</span>
+        <span class="badge badge-blue">React + Vite</span>
+        <span class="badge badge-purple">Cerebras LLM</span>
+    </div>
+</header>
+
+<!-- ════════════════ NAV ════════════════ -->
+<nav>
+    <a href="#overview">Overview</a>
+    <a href="#why">Why This Design</a>
+    <a href="#flow">Internal Flow</a>
+    <a href="#backend">Backend</a>
+    <a href="#frontend">Frontend</a>
+    <a href="#database">Database</a>
+    <a href="#llm">LLM Integration</a>
+    <a href="#antihallucination">Anti-Hallucination</a>
+    <a href="#chat">Chat System</a>
+    <a href="#techstack">Tech Stack</a>
+    <a href="#comparison">vs DeepWiki</a>
+    <a href="#filestructure">File Structure</a>
+    <a href="#quickstart">Quick Start</a>
+    <a href="#interview">Interview Q&amp;A</a>
+</nav>
+
+<div class="container">
+
+<!-- ════════════════ 1. OVERVIEW ════════════════ -->
+<section id="overview">
+    <h2><span class="num">1</span> System Overview</h2>
+    <p>CodeLens is a GitHub repository analysis tool. A user pastes a repo URL, and the system fetches the codebase via GitHub API, generates a comprehensive 5-section architecture document using a single LLM call, caches it in PostgreSQL, and displays it in a modern dark-theme UI with zoomable Mermaid diagrams and an interactive chat.</p>
+
+    <div class="card-glow">
+        <div class="arch-diagram">
+            <div class="arch-box box-user">Developer<small>Pastes GitHub repo URL</small></div>
+            <div class="arrow">&darr;</div>
+            <div class="arch-box box-frontend">React + Vite (Port 5173)<small>Dark theme SPA, Plain JavaScript</small></div>
+            <div class="arrow">&darr;</div>
+            <div class="arch-box box-backend">FastAPI Backend (Port 8000)<small>Hybrid analyzer, single LLM call</small></div>
+            <div class="arrow">&darr; &darr; &darr;</div>
+            <div style="display:flex; gap:1rem; flex-wrap:wrap; justify-content:center;">
+                <div class="arch-box box-github">GitHub API<small>repo_fetcher.py<br>Recursive file scan</small></div>
+                <div class="arch-box box-llm">Cerebras LLM<small>zai-glm-4.7<br>Single call for analysis</small></div>
+                <div class="arch-box box-db">PostgreSQL<small>repo_analysis cache<br>Optional (graceful fallback)</small></div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ════════════════ 2. WHY THIS DESIGN ════════════════ -->
+<section id="why">
+    <h2><span class="num">2</span> Why This Design</h2>
+
+    <h3>Why GitHub API Instead of Traditional RAG?</h3>
+    <div class="vs-grid">
+        <div class="vs-box vs-yes">
+            <h5>&#10003; Direct API Approach (What We Use)</h5>
+            <ul>
+                <li>Direct, precise file retrieval via GitHub REST API</li>
+                <li>No embedding costs (free GitHub API)</li>
+                <li>Code structure preserved (whole files, not chunks)</li>
+                <li>No vector database needed</li>
+                <li>Works perfectly for single-repo analysis</li>
+            </ul>
+        </div>
+        <div class="vs-box vs-no">
+            <h5>&#10007; Traditional RAG (Embeddings + Vector Search)</h5>
+            <ul>
+                <li>Semantic chunk retrieval (not precise)</li>
+                <li>Embedding API costs money</li>
+                <li>Chunking breaks code structure</li>
+                <li>Requires FAISS/Pinecone/Weaviate</li>
+                <li>Better for large document collections, not single repos</li>
+            </ul>
+        </div>
+    </div>
+
+    <h3>Why Cerebras?</h3>
+    <div class="card">
+        <p><strong>Free tier.</strong> The project budget is zero. Cerebras offers a generous free API tier with the <code class="mono">zai-glm-4.7</code> model. It's fast (optimized inference) and supports both chat completions and tool-use. No paid providers, no credit card.</p>
+    </div>
+
+    <h3>Why Plain JavaScript (not TypeScript)?</h3>
+    <div class="card">
+        <p><strong>Speed of iteration.</strong> The frontend is a relatively simple SPA — URL input, markdown rendering, a tree view, a chat panel. TypeScript adds type-checking overhead that isn't needed for this scope. Plain JSX in Vite works out of the box. All files are <code class="mono">.jsx</code> / <code class="mono">.js</code>.</p>
+    </div>
+
+    <h3>Why PostgreSQL is Optional?</h3>
+    <div class="card">
+        <p><strong>Zero-config local development.</strong> The system checks <code class="mono">DB_AVAILABLE</code> at startup. If PostgreSQL isn't running or psycopg2 isn't installed, every DB operation returns <code class="mono">None</code> or skips silently. The frontend <code class="mono">analysisCache</code> Map prevents duplicate requests within a session. This means developers can run the project without setting up a database.</p>
+    </div>
+
+    <h3>Why No README Fallback?</h3>
+    <div class="card">
+        <p>Many repos have no README or have an empty one. Instead of failing, the system falls back through: <strong>GitHub description &rarr; topics array &rarr; package.json description &rarr; pyproject.toml description &rarr; source file docstrings</strong>. This was added after testing with repos like <code class="mono">thrashr888/no-readme</code>.</p>
+    </div>
+
+    <h3>Why Recursive Source File Fetching?</h3>
+    <div class="card">
+        <p>The first version of <code class="mono">repo_fetcher.py</code> only read top-level files. Repos like Flask have source code in <code class="mono">src/flask/*.py</code> subdirectories. The fix: <code class="mono">_fetch_code_files_recursive()</code> scans all source directories up to 3 levels deep. This increased source file count from 0 to 50+ for complex repos.</p>
+    </div>
+</section>
+
+<!-- ════════════════ 3. HOW IT WORKS ════════════════ -->
+<section id="flow">
+    <h2><span class="num">3</span> Internal Flow — Step by Step</h2>
+    <p>Here's exactly what happens from the moment a user pastes a URL to seeing the result.</p>
+
+    <!-- STEP 1 -->
+    <h3>Step 1: User Enters GitHub URL</h3>
+    <div class="card">
+        <div class="flow">
+            <div class="flow-step">User pastes URL</div>
+            <span class="flow-arrow">&rarr;</span>
+            <div class="flow-step">HomePage.jsx</div>
+            <span class="flow-arrow">&rarr;</span>
+            <div class="flow-step">POST /api/analysis</div>
+            <span class="flow-arrow">&rarr;</span>
+            <div class="flow-step">Show loading spinner</div>
+        </div>
+        <p>The user types a GitHub URL into the landing page input field. The frontend sends a <code class="mono">POST /api/analysis</code> request with the URL and a <code class="mono">force_refresh</code> flag. A loading spinner appears while the backend processes.</p>
+    </div>
+
+    <!-- STEP 2 -->
+    <h3>Step 2: Backend Receives Request</h3>
+    <div class="card">
+        <div class="flow">
+            <div class="flow-step">FastAPI api.py</div>
+            <span class="flow-arrow">&rarr;</span>
+            <div class="flow-step">Check DB cache</div>
+            <span class="flow-arrow">&rarr;</span>
+            <div class="flow-step">Cache HIT?</div>
+            <span class="flow-arrow">&rarr;</span>
+            <div class="flow-step">Return cached (~50ms)</div>
+        </div>
+        <p><code class="mono">api.py</code> receives the request and calls <code class="mono">generate_repo_analysis()</code> in <code class="mono">main.py</code>. The first thing it does is check PostgreSQL for a cached result. If found, it returns immediately — no LLM call needed.</p>
+        <pre><span class="comment"># main.py</span>
+cached = get_repo_analysis(repo_url)
+<span class="keyword">if</span> cached:
+    <span class="keyword">return</span> cached  <span class="comment"># ~50ms response</span></pre>
+    </div>
+
+    <!-- STEP 3 -->
+    <h3>Step 3: Fetch Repository Data (Parallel)</h3>
+    <div class="card">
+        <p>If no cache, <code class="mono">repo_fetcher.py</code> fetches everything from GitHub in parallel using <code class="mono">asyncio.gather()</code>:</p>
+        <table>
+            <thead><tr><th>What</th><th>API Call</th><th>Returns</th><th>Time</th></tr></thead>
+            <tbody>
+                <tr><td>Repo metadata</td><td><code class="mono">validate_repo()</code></td><td>Name, description, language, topics</td><td>~300ms</td></tr>
+                <tr><td>File tree</td><td><code class="mono">get_file_tree()</code></td><td>Full directory structure (depth 3)</td><td>~500ms</td></tr>
+                <tr><td>Config files</td><td><code class="mono">fetch_key_files()</code></td><td>package.json, requirements.txt, etc. (22 names)</td><td>~1-2s</td></tr>
+                <tr><td>Source files</td><td><code class="mono">fetch_source_files()</code></td><td>All .py/.js/.ts/.go files in src/ dirs</td><td>~2-4s</td></tr>
+            </tbody>
+        </table>
+        <p>All four run simultaneously. Total time: <strong>~5-8 seconds</strong> (limited by the slowest call).</p>
+        <pre><span class="comment"># repo_fetcher.py</span>
+results = <span class="keyword">await</span> asyncio.gather(
+    validate_repo(url, github),
+    fetch_file_tree(github, url),
+    fetch_key_files(github, url, tree),
+    fetch_source_files(github, url, tree),
+)</pre>
+    </div>
+
+    <!-- STEP 4 -->
+    <h3>Step 4: Build LLM Prompt</h3>
+    <div class="card">
+        <p><code class="mono">hybrid_prompts.py</code> combines everything into a single prompt:</p>
+        <pre><span class="comment"># What the LLM receives:</span>
+
+<span class="keyword">System:</span> <span class="string">"You are CodeLens, an expert software architect.
+ Every statement MUST reference a specific file path.
+ If information is not present, say 'Not found'.
+ Do NOT invent file names or code."</span>
+
+<span class="keyword">User:</span> <span class="string">"Repository: pallets/flask
+ Description: The Python micro framework
+ Language: Python
+ Topics: [web, python, wsgi]
+
+ File Tree:
+ ├── src/flask/
+ │   ├── __init__.py
+ │   ├── app.py
+ │   └── ...
+
+ Config Files:
+ --- requirements.txt ---
+ Flask&gt;=2.0
+ Werkzeug&gt;=2.0
+
+ Source Files:
+ --- src/flask/app.py ---
+ class Flask(__name__):
+     def __init__(self, ...):
+         ..."</span></pre>
+        <p>The prompt contains: repo metadata + file tree + config file contents + source file contents. Everything the LLM needs to analyze the codebase.</p>
+    </div>
+
+    <!-- STEP 5 -->
+    <h3>Step 5: LLM Generates 5 Sections</h3>
+    <div class="card">
+        <p><code class="mono">hybrid_analyzer.py</code> calls Cerebras with the prompt. The LLM generates all 5 sections in one response:</p>
+        <pre><span class="keyword">## Section 1: Purpose &amp; Scope</span>
+Flask is a lightweight WSGI web application framework...
+
+<span class="keyword">## Section 2: Repository Layout</span>
+<span class="string">```
+flask/
+├── src/flask/        # Core framework source
+├── tests/            # Test suite
+...
+```</span>
+Pattern: modular layout
+
+<span class="keyword">## Section 3: Source Layer (Tech Stack)</span>
+| Category | Technology | Evidence |
+|----------|------------|----------|
+| Language | Python | pyproject.toml |
+| Framework | Flask | src/flask/__init__.py |
+
+<span class="keyword">## Section 4: Architecture</span>
+<span class="string">```mermaid
+flowchart TD
+    A[Client Request] --> B[WSGI Server]
+    B --> C[Flask App]
+...```</span>
+
+<span class="keyword">## Section 5: RPC Protocol</span>
+Flask uses WSGI protocol...</pre>
+        <p>Takes <strong>~10-15 seconds</strong>. The output is structured text with headers that the parser can split into sections.</p>
+    </div>
+
+    <!-- STEP 6 -->
+    <h3>Step 6: Parse Sections</h3>
+    <div class="card">
+        <p><code class="mono">parse_sections()</code> splits the LLM output by headers:</p>
+        <pre><span class="comment"># hybrid_analyzer.py</span>
+
+<span class="comment"># Find all section headers</span>
+headers = re.findall(<span class="string">r'## (?:Section \d+: )?(.+?)$'</span>, text, re.MULTILINE)
+
+<span class="comment"># Split by headers, extract content between them</span>
+<span class="keyword">for</span> i, header <span class="keyword">in</span> enumerate(headers):
+    start = text.index(header)
+    end = text.index(headers[i+1]) <span class="keyword">if</span> i+1 &lt; len(headers) <span class="keyword">else</span> len(text)
+    sections[header] = text[start:end]</pre>
+        <p>Returns a dictionary with 5 keys: <code class="mono">purpose_scope</code>, <code class="mono">repo_layout</code>, <code class="mono">source_layer</code>, <code class="mono">tech_stack</code>, <code class="mono">architecture_text</code>.</p>
+    </div>
+
+    <!-- STEP 7 -->
+    <h3>Step 7: Cache + Return</h3>
+    <div class="card">
+        <div class="flow">
+            <div class="flow-step">Parse complete</div>
+            <span class="flow-arrow">&rarr;</span>
+            <div class="flow-step">UPSERT to PostgreSQL</div>
+            <span class="flow-arrow">&rarr;</span>
+            <div class="flow-step">Return JSON to frontend</div>
+            <span class="flow-arrow">&rarr;</span>
+            <div class="flow-step">Store in analysisCache Map</div>
+        </div>
+        <p>The result is cached in PostgreSQL (if available) and returned to the frontend. The frontend stores it in an in-memory <code class="mono">analysisCache</code> Map to avoid duplicate requests.</p>
+        <pre><span class="comment"># db_utils.py - UPSERT</span>
+<span class="keyword">INSERT INTO</span> repo_analysis (repo_url, purpose_scope, ...)
+<span class="keyword">VALUES</span> (%s, %s, ...)
+<span class="keyword">ON CONFLICT</span> (repo_url) <span class="keyword">DO UPDATE SET</span> ...</pre>
+    </div>
+
+    <!-- STEP 8 -->
+    <h3>Step 8: Render Wiki Page</h3>
+    <div class="card">
+        <p>The frontend renders the analysis as a full-screen wiki page:</p>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0;">
+            <div class="feat-item">
+                <h5>WikiTreeView</h5>
+                <p>Parses the <code class="mono">repo_layout</code> text tree. Renders collapsible <code class="mono">├──</code> / <code class="mono">└──</code> folder structure. Click a section to scroll to it.</p>
+            </div>
+            <div class="feat-item">
+                <h5>MarkdownRenderer</h5>
+                <p>Converts each section's markdown to HTML. Handles headers, bold, code blocks (preserves tree chars), tables, lists, links.</p>
+            </div>
+            <div class="feat-item">
+                <h5>MermaidDiagram</h5>
+                <p>Extracts <code class="mono">```mermaid</code> blocks from <code class="mono">architecture_text</code>. Renders with zoom/pan/fullscreen. Ctrl+Scroll zoom. Click for modal.</p>
+            </div>
+            <div class="feat-item">
+                <h5>ChatPanel</h5>
+                <p>Floating bottom panel. Ask questions about the codebase. Single LLM call with repo context. Renders markdown in responses.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- CHAT FLOW -->
+    <h3>Chat Flow (Separate from Analysis)</h3>
+    <div class="card">
+        <p>Chat works independently — it uses cached analysis + fresh file context:</p>
+        <pre><span class="comment">// User types: "How does routing work?"</span>
+
+<span class="comment">// 1. Frontend sends request</span>
+POST /api/chat { repo_url, question }
+
+<span class="comment">// 2. Backend builds context</span>
+context = [
+    cached_analysis.purpose_scope,     <span class="comment">// ~1000 chars</span>
+    cached_analysis.tech_stack,        <span class="comment">// ~1000 chars</span>
+    cached_analysis.architecture_text, <span class="comment">// ~1000 chars</span>
+    repo_data.key_files[:5],           <span class="comment">// package.json, etc.</span>
+    repo_data.source_files[:5]         <span class="comment">// app.py, etc.</span>
+]
+
+<span class="comment">// 3. Single LLM call</span>
+response = cerebras.chat(
+    system=<span class="string">"You are CodeLens. Answer based on context."</span>,
+    user=<span class="string">"Repository: ...\n\nContext: ...\n\nQuestion: ..."</span>
+)
+
+<span class="comment">// 4. Return answer with file citations</span>
+<span class="keyword">return</span> response.choices[0].message.content</pre>
+    </div>
+</section>
+
+<!-- ════════════════ 4. BACKEND ════════════════ -->
+<section id="backend">
+    <h2><span class="num">4</span> Backend (Python / FastAPI)</h2>
+
+    <div class="grid-2">
+        <div>
+            <h3>Entry Point</h3>
+            <pre><span class="comment"># api.py</span>
+<span class="decor">@app.post</span>(<span class="string">"/api/analysis"</span>)
+<span class="keyword">async def</span> <span class="func">analyze</span>(req: AnalysisRequest):
+    result = <span class="keyword">await</span> generate_repo_analysis(
+        req.repo_url, req.force_refresh
+    )
+    <span class="keyword">return</span> AnalysisResponse(**result)
+
+<span class="decor">@app.post</span>(<span class="string">"/api/chat"</span>)
+<span class="keyword">async def</span> <span class="func">chat</span>(req: ChatRequest):
+    answer = <span class="keyword">await</span> chat_with_repo(
+        req.repo_url, req.question
+    )
+    <span class="keyword">return</span> {<span class="string">"answer"</span>: answer}</pre>
+        </div>
+        <div>
+            <h3>Orchestrator</h3>
+            <pre><span class="comment"># main.py</span>
+<span class="keyword">async def</span> <span class="func">generate_repo_analysis</span>(url):
+    <span class="comment"># 1. Check DB cache</span>
+    cached = get_repo_analysis(url)
+    <span class="keyword">if</span> cached: <span class="keyword">return</span> cached
+
+    <span class="comment"># 2. Fetch repo data (parallel API calls)</span>
+    repo_data = <span class="keyword">await</span> fetch_repo_data(url)
+
+    <span class="comment"># 3. Single LLM call</span>
+    sections = analyze_all_sections(repo_data)
+
+    <span class="comment"># 4. Cache to DB</span>
+    store_repo_analysis(url, sections)
+
+    <span class="keyword">return</span> sections</pre>
+        </div>
+    </div>
+
+    <h3>Key Backend Files</h3>
+    <div class="card">
+        <table>
+            <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+            <tbody>
+                <tr><td><code class="mono">api.py</code></td><td>FastAPI app, CORS, request/response models, endpoints</td></tr>
+                <tr><td><code class="mono">main.py</code></td><td>Orchestrator: <code class="mono">generate_repo_analysis()</code> and <code class="mono">chat_with_repo()</code></td></tr>
+                <tr><td><code class="mono">hybrid_analyzer.py</code></td><td>Builds the single LLM prompt, calls Cerebras, parses 5 sections</td></tr>
+                <tr><td><code class="mono">hybrid_prompts.py</code></td><td>System prompt + <code class="mono">build_hybrid_prompt()</code> with anti-hallucination rules</td></tr>
+                <tr><td><code class="mono">repo_fetcher.py</code></td><td>Parallel GitHub API fetching: metadata, file tree, config files, source files</td></tr>
+                <tr><td><code class="mono">llm_utils.py</code></td><td>Cerebras client wrapper</td></tr>
+                <tr><td><code class="mono">db_utils.py</code></td><td>PostgreSQL operations (optional, graceful fallback if unavailable)</td></tr>
+                <tr><td><code class="mono">tools/github_api.py</code></td><td>GitHub REST API client: validate, list dirs, read files, search, get tree</td></tr>
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<!-- ════════════════ 5. FRONTEND ════════════════ -->
+<section id="frontend">
+    <h2><span class="num">5</span> Frontend (React 19 + Vite 5)</h2>
+
+    <h3>Page Flow</h3>
+    <div class="flow">
+        <div class="flow-step">HomePage<small>URL input</small></div>
+        <span class="flow-arrow">&rarr;</span>
+        <div class="flow-step">Loading spinner<small>~15 sec</small></div>
+        <span class="flow-arrow">&rarr;</span>
+        <div class="flow-step">WikiPage<small>Full-screen dark layout</small></div>
+        <div style="width:100%; display:flex; justify-content:center; gap:1.5rem; margin-top:1rem; flex-wrap:wrap;">
+            <div class="flow-step">WikiTreeView<small>Folder tree + sections</small></div>
+            <div class="flow-step">MarkdownRenderer<small>Rendered sections</small></div>
+            <div class="flow-step">MermaidDiagram<small>Zoomable architecture</small></div>
+            <div class="flow-step">ChatPanel<small>Bottom floating</small></div>
+        </div>
+    </div>
+
+    <h3>Key Components</h3>
+    <div class="feat-grid">
+        <div class="feat-item">
+            <div class="feat-icon">&#9670;</div>
+            <h5>WikiTreeView</h5>
+            <p>Collapsible tree showing repo layout (<code class="mono">├──</code> / <code class="mono">└──</code> characters), section navigation with importance dots. Click a section to scroll to it.</p>
+        </div>
+        <div class="feat-item">
+            <div class="feat-icon">&#9670;</div>
+            <h5>MarkdownRenderer</h5>
+            <p>Converts raw markdown to HTML: headers, bold, inline code, code blocks (preserves tree characters), tables, lists, links. All styled for the dark theme.</p>
+        </div>
+        <div class="feat-item">
+            <div class="feat-icon">&#9670;</div>
+            <h5>MermaidDiagram</h5>
+            <p>Zoom in/out, reset, fit-to-screen. Ctrl+Scroll zoom. Drag to pan. Click to open fullscreen modal with blurred background overlay. ESC to close.</p>
+        </div>
+        <div class="feat-item">
+            <div class="feat-icon">&#9670;</div>
+            <h5>ChatPanel</h5>
+            <p>Floating bottom panel. Single Cerebras LLM call with repo context. Renders markdown in responses. No agentic loop — one call per question.</p>
+        </div>
+        <div class="feat-item">
+            <div class="feat-icon">&#9670;</div>
+            <h5>WikiPage</h5>
+            <p>No header bar. Full-screen dark gradient background. Breadcrumb navigation. The wiki content fills the entire viewport.</p>
+        </div>
+        <div class="feat-item">
+            <div class="feat-icon">&#9670;</div>
+            <h5>API Client Cache</h5>
+            <p>In-memory <code class="mono">analysisCache</code> Map prevents duplicate requests on re-renders. React StrictMode removed to avoid double-fetching.</p>
+        </div>
+    </div>
+
+    <h3>Why React + Vite (not Next.js)?</h3>
+    <div class="card">
+        <p><strong>SPA is sufficient.</strong> The frontend is a single-page app that talks to a FastAPI backend. There's no need for SSR, server components, or Next.js API routes. Vite gives faster dev server startup, smaller bundle size, and simpler deployment (static files). React Router v6 handles routing.</p>
+    </div>
+
+    <h3>Why Dark Theme?</h3>
+    <div class="card">
+        <p>Developer tools should be easy on the eyes. The design uses <code class="mono">slate-900</code> gradient backgrounds, <code class="mono">emerald</code> (#34d399) as the primary accent color, and <code class="mono">Inter</code> + <code class="mono">JetBrains Mono</code> fonts. The theme is consistent across all pages.</p>
+    </div>
+</section>
+
+<!-- ════════════════ 6. DATABASE ════════════════ -->
+<section id="database">
+    <h2><span class="num">6</span> Database (PostgreSQL — Optional)</h2>
+
+    <div class="card">
+        <p>PostgreSQL is <strong>optional</strong>. If psycopg2 isn't installed or the database isn't configured, the system runs without caching — every request regenerates the analysis. This makes local development zero-config.</p>
+    </div>
+
+    <h3>Schema</h3>
+    <pre><span class="keyword">CREATE TABLE</span> repo_analysis (
+    repo_url          <span class="type">VARCHAR(500)</span> <span class="emerald">PRIMARY KEY</span>,
+    purpose_scope     <span class="type">TEXT</span>,
+    repo_layout       <span class="type">TEXT</span>,
+    source_layer      <span class="type">TEXT</span>,
+    tech_stack        <span class="type">TEXT</span>,
+    architecture_text <span class="type">TEXT</span>,
+    rpc_protocol      <span class="type">TEXT</span>,
+    created_at        <span class="type">TIMESTAMP</span> <span class="keyword">DEFAULT</span> CURRENT_TIMESTAMP
+);</pre>
+
+    <h3>UPSERT Query</h3>
+    <pre><span class="keyword">INSERT INTO</span> repo_analysis
+  (repo_url, purpose_scope, repo_layout, source_layer, tech_stack, architecture_text)
+<span class="keyword">VALUES</span> (%s, %s, %s, %s, %s, %s)
+<span class="keyword">ON CONFLICT</span> (repo_url) <span class="keyword">DO UPDATE SET</span>
+  purpose_scope = EXCLUDED.purpose_scope,
+  repo_layout = EXCLUDED.repo_layout,
+  source_layer = EXCLUDED.source_layer,
+  tech_stack = EXCLUDED.tech_stack,
+  architecture_text = EXCLUDED.architecture_text;</pre>
+
+    <p><strong>Note:</strong> There is no <code class="mono">updated_at</code> column. The schema was simplified after the old version referenced a column that didn't exist, causing INSERT failures.</p>
+</section>
+
+<!-- ════════════════ 7. LLM INTEGRATION ════════════════ -->
+<section id="llm">
+    <h2><span class="num">7</span> LLM Integration (Cerebras)</h2>
+
+    <div class="grid-2">
+        <div class="card">
+            <h4>For Analysis</h4>
+            <p><strong>One call, all 5 sections.</strong> The <code class="mono">hybrid_analyzer.py</code> builds a single prompt containing repo metadata, file tree, config files, and source files. Cerebras generates all sections in one response. The output is parsed by <code class="mono">parse_sections()</code> which looks for <code class="mono">## Section N:</code> or <code class="mono">## Name</code> headers.</p>
+        </div>
+        <div class="card">
+            <h4>For Chat</h4>
+            <p><strong>One call per question.</strong> <code class="mono">chat_with_repo()</code> in main.py fetches repo context (analysis cache + key files + source files), builds a system prompt + user message, and calls Cerebras once. No agentic tool-use loop.</p>
+        </div>
+    </div>
+
+    <h3>Model</h3>
+    <div class="card">
+        <p><strong>zai-glm-4.7</strong> — the only Cerebras model with tool-use support. Used for both analysis and chat. Free tier, no rate limits for reasonable usage.</p>
+    </div>
+
+    <h3>API Usage</h3>
+    <pre><span class="keyword">from</span> cerebras.cloud.sdk <span class="keyword">import</span> Cerebras
+
+client = Cerebras(api_key=os.getenv(<span class="string">"CEREBRAS_API_KEY"</span>))
+
+response = client.chat.completions.create(
+    model=<span class="string">"zai-glm-4.7"</span>,
+    messages=[
+        {<span class="string">"role"</span>: <span class="string">"system"</span>, <span class="string">"content"</span>: system_prompt},
+        {<span class="string">"role"</span>: <span class="string">"user"</span>, <span class="string">"content"</span>: user_prompt},
+    ],
+    max_tokens=<span class="emerald">4096</span>,
+)
+
+answer = response.choices[<span class="emerald">0</span>].message.content</pre>
+</section>
+
+<!-- ════════════════ 8. ANTI-HALLUCINATION ════════════════ -->
+<section id="antihallucination">
+    <h2><span class="num">8</span> Anti-Hallucination System</h2>
+
+    <div class="card-glow">
+        <p>The LLM is given strict rules in the system prompt. Violations produce incorrect output, so these rules are critical:</p>
+        <table>
+            <thead><tr><th>Rule</th><th>What It Means</th></tr></thead>
+            <tbody>
+                <tr><td>Every statement must cite a file path</td><td>If the LLM says "uses React", it must say which <code class="mono">package.json</code> has <code class="mono">"react"</code></td></tr>
+                <tr><td>Use ONLY provided data</td><td>No guessing about functions, classes, or APIs not in the fetched files</td></tr>
+                <tr><td>"Not found" for missing info</td><td>If a README is empty, say so. Don't invent a purpose.</td></tr>
+                <tr><td>No invented file names</td><td>Don't reference <code class="mono">src/auth.js</code> if it wasn't in the file tree</td></tr>
+                <tr><td>Tech stack from config files only</td><td>Only list technologies found in <code class="mono">package.json</code>, <code class="mono">requirements.txt</code>, etc.</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <h3>System Prompt (Key Section)</h3>
+    <pre><span class="string">"CRITICAL RULES - VIOLATION IS NOT ACCEPTABLE:
+1. You are given EXACT file contents and directory structure from a real GitHub repository.
+2. You MUST use ONLY the data provided below. Every statement you make MUST reference
+   a specific file path from the provided data.
+3. If information is not present in the provided files, say 'Not found in provided files'
+   — DO NOT GUESS, DO NOT HALLUCINATE.
+4. Do NOT invent file names, function names, class names, or any code that is not
+   explicitly shown in the provided data.
+5. For technology stack: only list technologies that are EXPLICITLY present in the
+   provided config files (package.json, requirements.txt, etc.) or source code."</span></pre>
+</section>
+
+<!-- ════════════════ 9. CHAT SYSTEM ════════════════ -->
+<section id="chat">
+    <h2><span class="num">9</span> Chat System</h2>
+
+    <h3>Before (Agentic Loop — 8+ LLM Calls)</h3>
+    <div class="card" style="border-color: rgba(248,113,113,0.3);">
+        <p style="color: var(--red);">This approach was replaced. Kept for reference.</p>
+        <div class="flow">
+            <div class="flow-step">User question</div>
+            <span class="flow-arrow">&rarr;</span>
+            <div class="flow-step">LLM picks tool</div>
+            <span class="flow-arrow">&rarr;</span>
+            <div class="flow-step">Tool call #1</div>
+            <span class="flow-arrow">&rarr;</span>
+            <div class="flow-step">LLM picks tool</div>
+            <span class="flow-arrow">&rarr;</span>
+            <div class="flow-step">Tool call #2</div>
+            <span class="flow-arrow">&rarr;</span>
+            <div class="flow-step">...</div>
+            <span class="flow-arrow">&rarr;</span>
+            <div class="flow-step">LLM generates answer</div>
+        </div>
+        <p><strong>Problems:</strong> Slow (2-3 min), unpredictable, expensive, often picked wrong tools.</p>
+    </div>
+
+    <h3>After (Single LLM Call)</h3>
+    <div class="card" style="border-color: var(--emerald-dim);">
+        <div class="flow">
+            <div class="flow-step">User question</div>
+            <span class="flow-arrow">&rarr;</span>
+            <div class="flow-step">Build context (analysis + files)</div>
+            <span class="flow-arrow">&rarr;</span>
+            <div class="flow-step">Single Cerebras call</div>
+            <span class="flow-arrow">&rarr;</span>
+            <div class="flow-step">Answer with citations</div>
+        </div>
+        <p><strong>Result:</strong> ~3-5 seconds, deterministic, cheap, reliable.</p>
+    </div>
+
+    <h3>Chat Context Building</h3>
+    <pre><span class="comment"># main.py - chat_with_repo()</span>
+
+context_parts = []
+
+<span class="comment"># 1. From cached analysis</span>
+context_parts.append(f<span class="string">"Purpose: {analysis['purpose_scope'][:1000]}"</span>)
+context_parts.append(f<span class="string">"Tech Stack: {analysis['tech_stack'][:1000]}"</span>)
+context_parts.append(f<span class="string">"Architecture: {analysis['architecture_text'][:1000]}"</span>)
+
+<span class="comment"># 2. Key config files (up to 5)</span>
+<span class="keyword">for</span> name, content <span class="keyword">in</span> repo_data[<span class="string">"key_files"</span>].items()[:5]:
+    context_parts.append(f<span class="string">"\n--- {name} ---\n{content[:1500]}"</span>)
+
+<span class="comment"># 3. Source files (up to 5)</span>
+<span class="keyword">for</span> name, content <span class="keyword">in</span> repo_data[<span class="string">"source_files"</span>].items()[:5]:
+    context_parts.append(f<span class="string">"\n--- {name} ---\n{content[:1500]}"</span>)
+
+context = <span class="string">"\n"</span>.join(context_parts)</pre>
+</section>
+
+<!-- ════════════════ 10. TECH STACK ════════════════ -->
+<section id="techstack">
+    <h2><span class="num">10</span> Tech Stack</h2>
+
+    <div class="tech-grid">
+        <div class="tech-item"><div class="layer">Frontend</div><div class="name">React 19</div></div>
+        <div class="tech-item"><div class="layer">Bundler</div><div class="name">Vite 5</div></div>
+        <div class="tech-item"><div class="layer">Routing</div><div class="name">React Router v6</div></div>
+        <div class="tech-item"><div class="layer">Language</div><div class="name">Plain JavaScript</div></div>
+        <div class="tech-item"><div class="layer">Backend</div><div class="name">FastAPI</div></div>
+        <div class="tech-item"><div class="layer">LLM</div><div class="name">Cerebras</div></div>
+        <div class="tech-item"><div class="layer">Model</div><div class="name">zai-glm-4.7</div></div>
+        <div class="tech-item"><div class="layer">Database</div><div class="name">PostgreSQL</div></div>
+        <div class="tech-item"><div class="layer">API</div><div class="name">GitHub REST API</div></div>
+        <div class="tech-item"><div class="layer">Diagrams</div><div class="name">Mermaid.js</div></div>
+        <div class="tech-item"><div class="layer">Fonts</div><div class="name">Inter + JetBrains Mono</div></div>
+        <div class="tech-item"><div class="layer">Icons</div><div class="name">SVG (custom)</div></div>
+    </div>
+
+    <h3>Why Each Technology?</h3>
+    <table>
+        <thead><tr><th>Technology</th><th>Why Used</th><th>Alternative Considered</th></tr></thead>
+        <tbody>
+            <tr><td><strong>React 19</strong></td><td>Mature ecosystem, huge community, fast rendering</td><td>Vue, Svelte — less ecosystem</td></tr>
+            <tr><td><strong>Vite 5</strong></td><td>Instant dev server, ESM-based, small config</td><td>Webpack — slower, more config</td></tr>
+            <tr><td><strong>FastAPI</strong></td><td>Async Python, auto-docs, Pydantic validation</td><td>Flask — no async, no auto-docs</td></tr>
+            <tr><td><strong>Cerebras</strong></td><td>Free tier, fast inference, tool-use model</td><td>OpenAI — costs money, rate limits</td></tr>
+            <tr><td><strong>PostgreSQL</strong></td><td>Reliable, SQL, UPSERT support</td><td>SQLite — no UPSERT, less robust</td></tr>
+            <tr><td><strong>GitHub API</strong></td><td>Direct access, no cloning needed, rate limits OK</td><td>Git clone — disk space, slow</td></tr>
+            <tr><td><strong>Mermaid.js</strong></td><td>Diagrams as code, dark theme, zoom/pan support</td><td>D2, PlantUML — less JS integration</td></tr>
+        </tbody>
+    </table>
+</section>
+
+<!-- ════════════════ 11. COMPARISON ════════════════ -->
+<section id="comparison">
+    <h2><span class="num">11</span> CodeLens vs DeepWiki</h2>
+
+    <table>
+        <thead><tr><th>Feature</th><th>DeepWiki</th><th>CodeLens</th><th>Winner</th></tr></thead>
+        <tbody>
+            <tr><td><strong>Analysis Speed</strong></td><td>2-3 min (agentic)</td><td class="win">~15 sec (single call)</td><td class="win">CodeLens</td></tr>
+            <tr><td><strong>Architecture</strong></td><td>Agentic RAG (8+ LLM calls)</td><td>Hybrid (1 LLM call)</td><td class="win">CodeLens</td></tr>
+            <tr><td><strong>Frontend</strong></td><td>Next.js 15, TypeScript</td><td>React 19, plain JS</td><td>Equal</td></tr>
+            <tr><td><strong>LLM</strong></td><td>Multiple providers</td><td>Cerebras (free)</td><td>Equal</td></tr>
+            <tr><td><strong>Anti-Hallucination</strong></td><td>Generic prompts</td><td class="win">Strict file-path citation rules</td><td class="win">CodeLens</td></tr>
+            <tr><td><strong>No-README Support</strong></td><td>Fails or empty</td><td class="win">Fallback to description/topics/package.json</td><td class="win">CodeLens</td></tr>
+            <tr><td><strong>Folder Structure</strong></td><td>Generic tree</td><td class="win">Text tree + pattern detection</td><td class="win">CodeLens</td></tr>
+            <tr><td><strong>Tech Stack Format</strong></td><td>Prose description</td><td class="win">Markdown table with evidence</td><td class="win">CodeLens</td></tr>
+            <tr><td><strong>UI Polish</strong></td><td class="win">Production-ready, refined</td><td>Functional, clean dark theme</td><td class="win">DeepWiki</td></tr>
+            <tr><td><strong>Community</strong></td><td class="win">30k+ stars, active</td><td>New project</td><td class="win">DeepWiki</td></tr>
+            <tr><td><strong>Chat</strong></td><td>Agentic (slow)</td><td class="win">Single call (fast)</td><td class="win">CodeLens</td></tr>
+            <tr><td><strong>DB Caching</strong></td><td>Required</td><td class="win">Optional (graceful fallback)</td><td class="win">CodeLens</td></tr>
+        </tbody>
+    </table>
+</section>
+
+<!-- ════════════════ 12. FILE STRUCTURE ════════════════ -->
+<section id="filestructure">
+    <h2><span class="num">12</span> File Structure</h2>
+
+    <div class="grid-2">
+        <div>
+            <h3>Backend (Python)</h3>
+            <div class="file-tree">
+<span class="folder">codelens/backend/</span>
+├── <span class="hl">api.py</span>                    <span class="comment"># FastAPI app + endpoints</span>
+├── <span class="hl">main.py</span>                   <span class="comment"># Orchestrator</span>
+├── <span class="hl">hybrid_analyzer.py</span>        <span class="comment"># Single LLM call analysis</span>
+├── <span class="hl">hybrid_prompts.py</span>         <span class="comment"># Anti-hallucination prompts</span>
+├── <span class="hl">repo_fetcher.py</span>           <span class="comment"># Parallel GitHub fetching</span>
+├── <span class="file">llm_utils.py</span>              <span class="comment"># Cerebras client</span>
+├── <span class="file">db_utils.py</span>               <span class="comment"># PostgreSQL (optional)</span>
+├── <span class="folder">tools/</span>
+│   └── <span class="hl">github_api.py</span>         <span class="comment"># GitHub REST API client</span>
+├── <span class="file">.env</span>                      <span class="comment"># API keys</span>
+├── <span class="file">requirements.txt</span>
+└── <span class="folder">.venv/</span>                    <span class="comment"># Python virtual env</span>
+            </div>
+        </div>
+        <div>
+            <h3>Frontend (React + Vite)</h3>
+            <div class="file-tree">
+<span class="folder">codelens/frontend/</span>
+├── <span class="file">index.html</span>                <span class="comment"># Entry HTML + fonts</span>
+├── <span class="file">vite.config.js</span>            <span class="comment"># Vite config</span>
+├── <span class="file">package.json</span>
+├── <span class="folder">public/</span>
+│   ├── <span class="file">favicon.svg</span>           <span class="comment"># Green book icon</span>
+│   └── <span class="file">icons.svg</span>
+├── <span class="folder">src/</span>
+│   ├── <span class="hl">main.jsx</span>              <span class="comment"># App entry</span>
+│   ├── <span class="hl">App.jsx</span>               <span class="comment"># Router setup</span>
+│   ├── <span class="hl">index.css</span>             <span class="comment"># Global dark theme styles</span>
+│   ├── <span class="folder">api/</span>
+│   │   └── <span class="hl">client.js</span>         <span class="comment"># API calls + analysisCache</span>
+│   ├── <span class="folder">pages/</span>
+│   │   ├── <span class="hl">HomePage.jsx</span>      <span class="comment"># Landing page</span>
+│   │   └── <span class="hl">WikiPage.jsx</span>      <span class="comment"># Full-screen wiki</span>
+│   └── <span class="folder">components/</span>
+│       ├── <span class="hl">Header.jsx</span>        <span class="comment"># Only on HomePage</span>
+│       ├── <span class="hl">WikiTreeView.jsx</span>  <span class="comment"># Folder tree nav</span>
+│       ├── <span class="hl">MarkdownRenderer.jsx</span> <span class="comment"># Markdown to HTML</span>
+│       ├── <span class="hl">MermaidDiagram.jsx</span>   <span class="comment"># Zoom/pan/fullscreen</span>
+│       └── <span class="hl">ChatPanel.jsx</span>     <span class="comment"># Bottom chat panel</span>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ════════════════ 13. QUICK START ════════════════ -->
+<section id="quickstart">
+    <h2><span class="num">13</span> Quick Start</h2>
+
+    <div class="grid-2">
+        <div>
+            <h3>Backend</h3>
+            <pre><span class="comment"># 1. Navigate to backend</span>
+<span class="keyword">cd</span> codelens/backend
+
+<span class="comment"># 2. Create virtual environment</span>
+python -m venv .venv
+.venv\Scripts\activate        <span class="comment"># Windows</span>
+<span class="comment"># source .venv/bin/activate  # macOS/Linux</span>
+
+<span class="comment"># 3. Install dependencies</span>
+pip install -r requirements.txt
+
+<span class="comment"># 4. Configure .env</span>
+<span class="comment"># CEREBRAS_API_KEY=your_key</span>
+<span class="comment"># DATABASE_URL=postgresql://... (optional)</span>
+
+<span class="comment"># 5. Start server</span>
+uvicorn api:app --reload --port 8000</pre>
+        </div>
+        <div>
+            <h3>Frontend</h3>
+            <pre><span class="comment"># 1. Navigate to frontend</span>
+<span class="keyword">cd</span> codelens/frontend
+
+<span class="comment"># 2. Install dependencies</span>
+npm install
+
+<span class="comment"># 3. Start dev server</span>
+npm run dev
+<span class="comment"># Opens at http://localhost:5173</span>
+
+<span class="comment"># 4. Build for production</span>
+npm run build</pre>
+        </div>
+    </div>
+
+    <h3>Environment Variables</h3>
+    <pre><span class="comment"># codelens/backend/.env</span>
+<span class="emerald">CEREBRAS_API_KEY</span>=your_cerebras_api_key
+<span class="emerald">GITHUB_TOKEN</span>=ghp_your_github_token    <span class="comment"># optional, increases rate limit</span>
+<span class="emerald">DATABASE_URL</span>=postgresql://user:pass@localhost:5432/repo_analysis_db  <span class="comment"># optional</span></pre>
+</section>
+
+<!-- ════════════════ INTERVIEW Q&A ════════════════ -->
+<section id="interview">
+    <h2><span class="num">14</span> Interview Questions &amp; Answers</h2>
+    <p>Every question an interviewer could ask about this project, from architecture to implementation details.</p>
+
+    <!-- ── ARCHITECTURE ── -->
+    <h3>A. System Design &amp; Architecture</h3>
+
+    <div class="card">
+        <h4>Q1: Walk me through the high-level architecture of this project.</h4>
+        <p>CodeLens is a three-tier system: <strong>React/Vite SPA</strong> (frontend) &rarr; <strong>FastAPI backend</strong> (orchestration) &rarr; <strong>External services</strong> (GitHub API, Cerebras LLM, PostgreSQL). The frontend sends a GitHub URL to the backend. The backend fetches repo data via GitHub API in parallel, builds a single prompt with all the context, calls Cerebras LLM once to generate 5 analysis sections, caches the result in PostgreSQL, and returns it. The frontend renders it as a wiki page with zoomable Mermaid diagrams and markdown content.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q2: Why did you choose a hybrid approach over an agentic loop?</h4>
+        <p>The first version used an agentic loop — the LLM would decide which MCP tool to call, execute it, get the result, and loop (8+ sequential LLM calls, 2-3 minutes per analysis). I replaced it with a hybrid approach: one LLM call generates all 5 sections at once (~15 seconds). <strong>Why:</strong> (1) predictable latency, (2) lower token cost (single prompt vs 8+), (3) works with Cerebras free tier without tool-use overhead, (4) simpler codebase, (5) more reliable — no risk of the agent looping or picking wrong tools.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q3: What are the trade-offs of the hybrid approach?</h4>
+        <p><strong>Pros:</strong> Fast, cheap, predictable, simple. <strong>Cons:</strong> (1) The LLM can't dynamically explore the codebase — it only sees what we pre-fetch, so it might miss important files in large repos. (2) The context window is limited — we truncate source files to ~1500 chars each, which may lose nuance. (3) No iterative refinement — the agentic approach could read a file, realize it needs more context, and fetch another. The hybrid approach is a single shot. <strong>Mitigation:</strong> We fetch config files + all source files recursively, and the LLM prompt is carefully designed to work with the available data.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q4: How does this system handle scalability?</h4>
+        <p><strong>Per-request:</strong> Each analysis takes ~15 sec (GitHub fetch + LLM call). The DB cache means repeat requests are instant. <strong>Concurrency:</strong> FastAPI is async, so it handles multiple requests without blocking. GitHub API rate limits (5000 req/hr with token) are the bottleneck for many concurrent analyses. <strong>Horizontal scaling:</strong> The backend is stateless — just add more instances behind a load balancer. The DB is the shared state. <strong>LLM scaling:</strong> Cerebras handles inference; we don't control it, but their free tier is generous for moderate usage.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q5: How would you improve this system if you had more time?</h4>
+        <p>(1) <strong>Streaming:</strong> Use WebSocket/SSE to stream LLM output to the frontend for better UX. (2) <strong>Smarter fetching:</strong> Use the LLM to decide which files to read (agentic fetch) before the single analysis call. (3) <strong>Embeddings:</strong> Add vector search for the chat system so it can retrieve relevant code snippets instead of truncating. (4) <strong>Rate limiting:</strong> Add request queuing for high traffic. (5) <strong>Testing:</strong> Add integration tests for the full pipeline. (6) <strong>Monitoring:</strong> Add Prometheus metrics for LLM latency, GitHub API usage, cache hit rate.</p>
+    </div>
+
+    <!-- ── BACKEND ── -->
+    <h3>B. Backend Design</h3>
+
+    <div class="card">
+        <h4>Q6: How does the GitHub API integration work?</h4>
+        <p><code class="mono">tools/github_api.py</code> wraps the GitHub REST API. It uses <code class="mono">httpx.AsyncClient</code> for non-blocking HTTP calls. Key methods: <code class="mono">validate_repo()</code> (checks accessibility, returns metadata + topics), <code class="mono">list_directory()</code> (lists folder contents), <code class="mono">get_file_content()</code> (reads file), <code class="mono">get_file_tree()</code> (recursive directory listing with depth limit). The <code class="mono">repo_fetcher.py</code> calls these in parallel using <code class="mono">asyncio.gather()</code> for speed.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q7: How do you handle GitHub API rate limits?</h4>
+        <p>Without authentication: 60 requests/hour. With a token: 5000/hour. The system uses a <code class="mono">GITHUB_TOKEN</code> from .env if available. We also minimize calls by: (1) caching results in PostgreSQL, (2) fetching file trees once (not per-section), (3) only reading config files by name (not scanning all files). If rate-limited, the system returns an error with a clear message.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q8: Explain the database schema and why you chose that design.</h4>
+        <p>Single table <code class="mono">repo_analysis</code> with <code class="mono">repo_url</code> as primary key. Each column stores one analysis section as TEXT. UPSERT on conflict updates all fields. <strong>Why TEXT type:</strong> Analysis sections can be long (markdown, mermaid code), and TEXT has no length limit. <strong>Why no normalized tables:</strong> The data is always accessed as a whole — we never query "just the tech stack for repo X". One row per repo is simpler and faster. <strong>Why no updated_at:</strong> Initial version had it but the column wasn't being set, causing INSERT failures. Removed it since <code class="mono">created_at</code> is sufficient for cache invalidation.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q9: Why is the database optional? How does the fallback work?</h4>
+        <p>For local development, requiring PostgreSQL adds setup friction. The system checks: (1) Is psycopg2 installed? (2) Can we connect? If either fails, <code class="mono">DB_AVAILABLE = False</code>. Every DB operation checks this flag and returns <code class="mono">None</code> or skips silently. The frontend cache (<code class="mono">analysisCache</code> Map) prevents duplicate requests within a session. Without DB, each page load regenerates the analysis (~15 sec), but it works.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q10: How does the section parser work?</h4>
+        <p><code class="mono">hybrid_analyzer.py</code> calls Cerebras, gets the full response, then <code class="mono">parse_sections()</code> splits it. It uses regex to find section headers: <code class="mono">## Section N: Name</code>, <code class="mono">## Name</code>, or <code class="mono"># Name</code>. Each section's content is everything between one header and the next. If a section isn't found, it defaults to "Section not generated." The parser also strips the first header line from each section's content (since the wiki page renders the header separately).</p>
+    </div>
+
+    <div class="card">
+        <h4>Q11: How does the recursive file fetcher work?</h4>
+        <p><code class="mono">_fetch_code_files_recursive()</code> takes a list of source directories (e.g., <code class="mono">["src", "lib", "app"]</code>) and recursively scans them for source files (.py, .js, .ts, .go, .rs, .java, .rb, .php, .c, .cpp, .h). It uses <code class="mono">asyncio.gather()</code> to read multiple files in parallel. Depth is limited to 3 levels to avoid infinite recursion. Files are truncated to ~3000 chars each to stay within LLM context limits.</p>
+    </div>
+
+    <!-- ── LLM ── -->
+    <h3>C. LLM Integration</h3>
+
+    <div class="card">
+        <h4>Q12: How do you prevent LLM hallucination?</h4>
+        <p>Three layers: (1) <strong>Strict system prompt:</strong> Rules like "every statement must cite a file path", "use ONLY provided data", "say 'Not found' for missing info". (2) <strong>Constrained input:</strong> We only feed the LLM actual file contents and directory structures — no vague descriptions. (3) <strong>Post-processing:</strong> The section parser checks for empty/missing sections and falls back to defaults. The LLM model <code class="mono">zai-glm-4.7</code> also tends to be conservative and follow instructions well.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q13: How do you handle context window limitations?</h4>
+        <p>Cerebras models have a context window (varies by model). We manage it by: (1) Truncating each source file to ~3000 chars, (2) Limiting to 10 key config files + 10 source files, (3) Truncating analysis context in chat to ~1000 chars per section, (4) Using <code class="mono">max_tokens=4096</code> for output. If the input exceeds the window, the API call may fail — we catch this and return an error. For large repos, this means some files are missed, which is a known trade-off.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q14: Why Cerebras specifically? What about OpenAI, Anthropic, etc.?</h4>
+        <p><strong>Budget constraint:</strong> The project uses zero paid services. Cerebras offers a free API tier with decent rate limits. OpenAI/Anthropic require paid API keys. <strong>Model choice:</strong> <code class="mono">zai-glm-4.7</code> is the only Cerebras model with tool-use support (though we only use chat completions now). <strong>Speed:</strong> Cerebras has optimized inference infrastructure. <strong>Trade-off:</strong> Smaller model means lower quality outputs compared to GPT-4 or Claude, but the strict prompt compensates.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q15: How would you switch to a different LLM provider?</h4>
+        <p><code class="mono">llm_utils.py</code> wraps the Cerebras client. To switch: (1) Create a new client class for the target provider (e.g., <code class="mono">OpenAIClient</code>), (2) Implement the same <code class="mono">chat.completions.create()</code> interface, (3) Update the model name and API key env var. The prompts in <code class="mono">hybrid_prompts.py</code> are provider-agnostic — they're just strings. The only Cerebras-specific code is in <code class="mono">main.py</code> (chat) and <code class="mono">hybrid_analyzer.py</code> (analysis).</p>
+    </div>
+
+    <div class="card">
+        <h4>Q16: How do you parse the LLM output into structured sections?</h4>
+        <p>The LLM is prompted to output sections with headers like <code class="mono">## Section 1: Purpose &amp; Scope</code>. The parser uses regex patterns: <code class="mono">r'## Section \d+: (.+?)$'</code>, <code class="mono">r'## (.+?)$'</code>, <code class="mono">r'# (.+?)$'</code>. It finds all headers, sorts by position, and extracts content between consecutive headers. If the LLM outputs in a slightly different format (e.g., missing "Section N"), the fallback patterns still catch it. This makes the parser robust to minor LLM output variations.</p>
+    </div>
+
+    <!-- ── FRONTEND ── -->
+    <h3>D. Frontend Architecture</h3>
+
+    <div class="card">
+        <h4>Q17: How does the frontend prevent duplicate API calls?</h4>
+        <p><code class="mono">api/client.js</code> maintains an in-memory <code class="mono">analysisCache</code> (a <code class="mono">Map</code>). Before every fetch, it checks if the URL+forceRefresh key exists in the cache. If yes, returns the cached result. If no, fetches and stores. <strong>Also:</strong> React StrictMode was removed from <code class="mono">main.jsx</code> because it causes double-rendering in dev mode, which triggers duplicate API calls. The cache key includes <code class="mono">force_refresh</code> so manual refreshes bypass it.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q18: How does the Mermaid diagram zoom/pan work?</h4>
+        <p><code class="mono">MermaidDiagram.jsx</code> uses CSS transforms: <code class="mono">transform: scale(${zoom}) translate(${panX}px, ${panY}px)</code>. Zoom is controlled by: (1) buttons (+/-/reset), (2) Ctrl+Scroll wheel (with <code class="mono">event.preventDefault()</code> to prevent page zoom), (3) pinch on trackpad. Pan uses <code class="mono">onMouseDown/Move/Up</code> events tracking delta movement. The fullscreen modal uses a fixed-position overlay with <code class="mono">backdrop-filter: blur(8px)</code> and ESC key listener to close.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q19: How does the MarkdownRenderer handle code blocks with tree characters?</h4>
+        <p>Early bug: code blocks were being skipped entirely because the regex for inline code (<code class="mono">`code`</code>) was consuming backticks before the code block parser ran. Fix: parse code blocks first (match <code class="mono">```...```</code>), extract their content, wrap in <code class="mono">&lt;pre&gt;&lt;code&gt;</code>, then process inline markdown on non-code text. Tree characters (<code class="mono">├──</code>, <code class="mono">└──</code>, <code class="mono">│</code>) render correctly inside <code class="mono">&lt;pre&gt;</code> blocks because whitespace is preserved.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q20: Why remove React StrictMode?</h4>
+        <p>React StrictMode intentionally double-invokes effects and state updates in development to catch bugs. This caused <code class="mono">analyzeRepository()</code> to fire twice on mount, sending two POST requests to the backend. The second request would either hit the DB cache (wasteful) or trigger a second LLM call (expensive). Removing StrictMode is acceptable because: (1) the app is simple enough that double-rendering bugs are unlikely, (2) the performance cost of duplicate API calls outweighs StrictMode's benefits, (3) production builds don't have StrictMode double-rendering anyway.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q21: How does the WikiPage handle navigation without a header bar?</h4>
+        <p>The WikiPage has no top header — it fills the entire viewport. Navigation is via: (1) <code class="mono">WikiTreeView</code> sidebar (collapsible folder tree + section links), (2) Breadcrumb at the top (<code class="mono">CodeLens / owner/repo</code>), (3) Back button to return to HomePage. The tree view uses <code class="mono">onClick</code> to scroll to sections via <code class="mono">document.getElementById(sectionId).scrollIntoView()</code>. The chat panel floats at the bottom with <code class="mono">position: fixed</code>.</p>
+    </div>
+
+    <!-- ── API DESIGN ── -->
+    <h3>E. API Design</h3>
+
+    <div class="card">
+        <h4>Q22: What are the API endpoints and their responsibilities?</h4>
+        <p><strong>POST /api/analysis:</strong> Accepts <code class="mono">{ repo_url, force_refresh }</code>. Checks DB cache, fetches from GitHub if miss, generates LLM analysis, stores in DB, returns all sections. <strong>GET /api/analysis/{repo_url}:</strong> Retrieves cached analysis from DB (read-only). <strong>POST /api/chat:</strong> Accepts <code class="mono">{ repo_url, question }</code>. Builds context from cached analysis + key files, makes single LLM call, returns answer. All endpoints return JSON. CORS allows <code class="mono">localhost:5173</code> and <code class="mono">localhost:3000</code>.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q23: Why use POST for analysis instead of GET?</h4>
+        <p>GET requests should be idempotent and cacheable. Analysis is expensive (LLM call, GitHub API calls) and not idempotent (force_refresh bypasses cache). POST allows: (1) request body with <code class="mono">force_refresh</code> flag, (2) clear indication that the server performs side effects (LLM call, DB write), (3) no URL length limits (GitHub URLs can be long). GET /api/analysis/{url} is available for read-only cache lookups.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q24: How does error handling work across the stack?</h4>
+        <p><strong>Backend:</strong> Each function catches exceptions and returns meaningful errors. <code class="mono">GitHubAccessError</code> for repo access issues. FastAPI <code class="mono">HTTPException</code> with status codes (404 for not found, 500 for internal errors). DB errors are logged but don't crash the request (graceful degradation). <strong>Frontend:</strong> <code class="mono">client.js</code> checks <code class="mono">response.ok</code> and throws with the error detail. Components catch errors and display them in the UI (e.g., "Failed to analyze repository"). The chat panel shows error messages inline.</p>
+    </div>
+
+    <!-- ── SECURITY ── -->
+    <h3>F. Security</h3>
+
+    <div class="card">
+        <h4>Q25: How do you handle API keys and secrets?</h4>
+        <p><strong>Backend:</strong> Keys stored in <code class="mono">.env</code> file (gitignored). Loaded via <code class="mono">python-dotenv</code>. Never hardcoded. <code class="mono">CEREBRAS_API_KEY</code> and <code class="mono">GITHUB_TOKEN</code> are the two secrets. <strong>Frontend:</strong> No secrets — it only talks to the FastAPI backend. <strong>DB credentials:</strong> Also in .env, with sensible defaults for local dev. <strong>Production:</strong> Use environment variables injected by the deployment platform (e.g., Vercel, Railway).</p>
+    </div>
+
+    <div class="card">
+        <h4>Q26: What CORS configuration do you use?</h4>
+        <p><code class="mono">allow_origins=["http://localhost:5173", "http://localhost:3000"]</code> — only the frontend dev servers. <code class="mono">allow_methods=["*"]</code> and <code class="mono">allow_headers=["*"]</code> for flexibility during development. <code class="mono">allow_credentials=True</code> to support cookies if needed. <strong>Production:</strong> Would restrict origins to the actual deployed frontend URL.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q27: Is there any input validation?</h4>
+        <p><strong>Pydantic models:</strong> <code class="mono">AnalysisRequest</code> and <code class="mono">ChatRequest</strong> validate input types. <code class="mono">repo_url</code> is a string, <code class="mono">force_refresh</code> is a boolean. <strong>URL validation:</strong> <code class="mono">validate_repo()</code> checks that the URL points to a valid, accessible GitHub repository. <strong>SQL injection:</strong> Not possible — we use parameterized queries (<code class="mono">%s</code> placeholders) with psycopg2. <strong>XSS:</strong> The frontend renders markdown as HTML — <code class="mono">MarkdownRenderer</code> doesn't use <code class="mono">dangerouslySetInnerHTML</code> for user input, only for LLM-generated markdown.</p>
+    </div>
+
+    <!-- ── PERFORMANCE ── -->
+    <h3>G. Performance &amp; Optimization</h3>
+
+    <div class="card">
+        <h4>Q28: How do you optimize the analysis pipeline for speed?</h4>
+        <p><strong>Parallel fetching:</strong> <code class="mono">asyncio.gather()</code> fetches config files, source files, and repo metadata simultaneously. <strong>Single LLM call:</strong> All 5 sections in one prompt (vs 8+ calls in the old agentic approach). <strong>DB caching:</strong> Repeat requests are instant. <strong>Frontend cache:</strong> In-memory Map prevents duplicate requests. <strong>File truncation:</strong> Source files capped at ~3000 chars to reduce prompt size and LLM processing time. <strong>Depth limit:</strong> File tree limited to 3 levels to avoid fetching too many files.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q29: What are the bottlenecks in this system?</h4>
+        <p><strong>GitHub API:</strong> Each file read is an API call. Large repos with many files hit rate limits (5000/hr with token). <strong>LLM latency:</strong> Cerebras inference takes ~10-15 seconds for a large prompt. <strong>Network:</strong> Each GitHub API call has ~200-500ms latency. <strong>DB:</strong> PostgreSQL writes are fast (~5ms) but reads with cold cache are slow (full analysis regeneration). <strong>Frontend:</strong> Mermaid rendering can be slow for complex diagrams (~2-3 sec).</p>
+    </div>
+
+    <div class="card">
+        <h4>Q30: How would you handle 100 concurrent users analyzing different repos?</h4>
+        <p><strong>Current bottleneck:</strong> GitHub API rate limits (5000/hr). With 100 concurrent users, each analysis uses ~10-20 API calls, so ~1000-2000 calls in a short window. <strong>Solutions:</strong> (1) Request queuing with rate limiting, (2) Multiple GitHub tokens for rotation, (3) Aggressive DB caching (most repos will be repeat requests), (4) Horizontal scaling of FastAPI instances, (5) Background job queue (Celery/RQ) for analysis generation.</p>
+    </div>
+
+    <!-- ── TESTING ── -->
+    <h3>H. Testing &amp; Quality</h3>
+
+    <div class="card">
+        <h4>Q31: How would you test this system?</h4>
+        <p><strong>Unit tests:</strong> Test <code class="mono">parse_sections()</code> with various LLM output formats. Test <code class="mono">build_hybrid_prompt()</code> with mock repo data. Test <code class="mono">MarkdownRenderer</code> with edge cases. <strong>Integration tests:</strong> Test the full API pipeline with a mock GitHub API and mock LLM. Test DB operations with a test database. <strong>E2E tests:</strong> Use Playwright/Cypress to test the full flow: enter URL &rarr; see analysis &rarr; use chat. <strong>Mocking:</strong> Mock Cerebras API ( expensive to call in tests) and GitHub API (rate limits).</p>
+    </div>
+
+    <div class="card">
+        <h4>Q32: What are the main edge cases you've handled?</h4>
+        <p>(1) <strong>No README:</strong> Fallback to GitHub description, topics, package.json. (2) <strong>Empty/private repos:</strong> GitHub API returns error, caught and surfaced. (3) <strong>DB unavailable:</strong> System works without caching. (4) <strong>LLM output format variations:</strong> Parser uses multiple regex patterns. (5) <strong>Large repos:</strong> File truncation + depth limits. (6) <strong>Rate limits:</strong> Token-based authentication increases limits. (7) <strong>Invalid URLs:</strong> Pydantic validation + GitHub API check. (8) <strong>Network errors:</strong> try/except with meaningful error messages.</p>
+    </div>
+
+    <!-- ── DECISIONS ── -->
+    <h3>I. Key Technical Decisions</h3>
+
+    <div class="card">
+        <h4>Q33: Why plain JavaScript instead of TypeScript?</h4>
+        <p>Trade-off: type safety vs development speed. For this project: (1) The frontend is relatively simple (5 components, 2 pages), (2) No team to benefit from type contracts, (3) Vite works with plain JSX out of the box, (4) Adding TypeScript means config files (<code class="mono">tsconfig.json</code>), type annotations on every component, and stricter build steps. If the project grows to 20+ components, TypeScript would be worth adding.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q34: Why not use embeddings/vector search for the chat system?</h4>
+        <p>Embeddings (e.g., OpenAI embeddings + FAISS) would enable semantic search over the codebase. But: (1) Requires a paid embedding API, (2) Adds complexity (chunking, indexing, similarity search), (3) The current approach (pass analysis + key files as context) works for most questions. <strong>When embeddings would help:</strong> Questions like "find all functions related to authentication" that need semantic matching across many files. The current system can only answer questions about files it has in context.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q35: Why use FastAPI instead of Flask or Django?</h4>
+        <p><strong>FastAPI advantages:</strong> (1) Native async support (critical for GitHub API + LLM calls), (2) Auto-generated OpenAPI docs, (3) Pydantic request/response validation, (4) Type hints as documentation. <strong>Flask:</strong> No native async, would need <code class="mono">aiohttp</code> or <code class="mono">celery</code> for background tasks. <strong>Django:</strong> Too heavy — includes ORM, admin, auth that we don't need. FastAPI is the right size for this project.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q36: Why not use WebSockets for the chat?</h4>
+        <p>The current chat is request-response: send question, get answer. WebSockets would enable streaming (token-by-token output from the LLM), which improves perceived latency. But: (1) Cerebras SDK may not support streaming, (2) Adds complexity (connection management, reconnection logic), (3) The answer is usually short (1-3 paragraphs), so the user doesn't wait long. <strong>Future improvement:</strong> Add WebSocket streaming for the analysis pipeline (stream each section as it's generated).</p>
+    </div>
+
+    <!-- ── DEPLOYMENT ── -->
+    <h3>J. Deployment &amp; Operations</h3>
+
+    <div class="card">
+        <h4>Q37: How would you deploy this to production?</h4>
+        <p><strong>Backend:</strong> Deploy FastAPI with Gunicorn + Uvicorn workers on a VPS (e.g., Railway, Render, DigitalOcean). Use environment variables for secrets. <strong>Frontend:</strong> Build with <code class="mono">npm run build</code>, deploy static files to Vercel/Netlify/Cloudflare Pages. <strong>Database:</strong> Managed PostgreSQL (e.g., Supabase, Neon, AWS RDS). <strong>Domain:</strong> Point frontend to backend API via reverse proxy or CORS configuration.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q38: How do you handle environment-specific configuration?</h4>
+        <p><code class="mono">.env</code> files for local dev (gitignored). For production: inject via platform env vars. Backend reads with <code class="mono">os.getenv()</code>. Frontend uses Vite's <code class="mono">import.meta.env</code> for client-side config (though currently none needed — all config is server-side). <strong>Key vars:</strong> <code class="mono">CEREBRAS_API_KEY</code>, <code class="mono">GITHUB_TOKEN</code>, <code class="mono">DATABASE_URL</code>, <code class="mono">CORS_ORIGINS</code>.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q39: What monitoring/observability would you add?</h4>
+        <p>(1) <strong>Structured logging:</strong> Replace print statements with Python <code class="mono">logging</code> module + JSON format. (2) <strong>Metrics:</strong> Prometheus for request count, LLM latency, GitHub API calls, cache hit rate. (3) <strong>Tracing:</strong> OpenTelemetry for distributed tracing across backend services. (4) <strong>Error tracking:</strong> Sentry for exception monitoring. (5) <strong>Health checks:</strong> <code class="mono">/health</code> endpoint that verifies DB + GitHub + Cerebras connectivity.</p>
+    </div>
+
+    <!-- ── CODE QUALITY ── -->
+    <h3>K. Code Quality &amp; Patterns</h3>
+
+    <div class="card">
+        <h4>Q40: What design patterns did you use?</h4>
+        <p>(1) <strong>Repository pattern:</strong> <code class="mono">github_api.py</code> abstracts GitHub API calls behind a clean interface. (2) <strong>Strategy pattern:</strong> <code class="mono">db_utils.py</code> gracefully degrades — the same code works with or without PostgreSQL. (3) <strong>Facade pattern:</strong> <code class="mono">main.py</code> orchestrates fetcher, analyzer, and DB behind a single <code class="mono">generate_repo_analysis()</code> function. (4) <strong>Cache-aside pattern:</strong> Check cache first, on miss fetch + store. (5) <strong>Builder pattern:</strong> <code class="mono">build_hybrid_prompt()</code> constructs a complex prompt from multiple data sources.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q41: How do you manage state in the frontend?</h4>
+        <p><strong>Server state:</strong> Fetched via API and stored in React <code class="mono">useState</code>. The <code class="mono">analysisCache</code> Map in <code class="mono">client.js</code> acts as a global cache. <strong>UI state:</strong> Component-local <code class="mono">useState</code> for things like zoom level, chat input, tree expand/collapse. <strong>No global state library:</strong> The app is simple enough that prop drilling + local state works. If it grew, I'd use Zustand or React Context for shared state.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q42: How do you handle loading states and UX?</h4>
+        <p><strong>Analysis loading:</strong> Full-page spinner with "Analyzing repository..." message. Backend takes ~15 sec, so the spinner prevents user confusion. <strong>Chat loading:</strong> "Thinking..." message in chat panel. <strong>Error states:</strong> Red error banner with specific message (e.g., "Repository not found", "Rate limit exceeded"). <strong>Empty states:</strong> Graceful messages when no data is available. <strong>Optimistic updates:</strong> Not used — the analysis is too expensive to predict.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q43: How would you add unit tests to this project?</h4>
+        <p><strong>Backend:</strong> Use <code class="mono">pytest</code> + <code class="mono">httpx.AsyncClient</code> for API tests. Mock <code class="mono">Cerebras</code> and <code class="mono">GitHubMCP</code> with <code class="mono">unittest.mock</code>. Test section parser with various inputs. Test prompt builder with mock data. <strong>Frontend:</strong> Use <code class="mono">Vitest</code> (works with Vite) + <code class="mono">@testing-library/react</code>. Test component rendering, user interactions, API client caching. <strong>E2E:</strong> Playwright for full browser tests.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q44: What's the most complex bug you fixed in this project?</h4>
+        <p><strong>The "0 source files" bug:</strong> The initial <code class="mono">repo_fetcher.py</code> only read top-level files. Repos like Flask have source code in <code class="mono">src/flask/*.py</code>. The LLM returned "No source files found" because the prompt had empty source data. Fix: <code class="mono">_fetch_code_files_recursive()</code> scans all directories recursively. <strong>The "code blocks skipped" bug:</strong> <code class="mono">MarkdownRenderer</code> was processing inline code (<code class="mono">`code`</code>) before code blocks (<code class="mono">```code```</code>), consuming backticks. Fix: parse code blocks first, then inline code on remaining text. <strong>The "DB updated_at" bug:</strong> Schema had <code class="mono">updated_at</code> column but UPSERT query didn't set it, causing INSERT failures. Fix: removed the column from schema.</p>
+    </div>
+
+    <div class="card">
+        <h4>Q45: If you had to rebuild this from scratch, what would you do differently?</h4>
+        <p>(1) <strong>Start with TypeScript</strong> — the type safety pays off as the codebase grows. (2) <strong>Use embeddings from day one</strong> — even a simple TF-IDF search would improve chat quality. (3) <strong>Add streaming</strong> — WebSocket for real-time LLM output. (4) <strong>Use a task queue</strong> — Celery for background analysis generation. (5) <strong>Better testing</strong> — mock external services from the start. (6) <strong>Structured logging</strong> — not print statements. (7) <strong>Docker</strong> — containerize backend + DB for reproducible setup.</p>
+    </div>
+</section>
+
+</div>
+
+<!-- ════════════════ FOOTER ════════════════ -->
+<footer>
+    <p><strong>CodeLens</strong> &mdash; Hybrid Analysis Engine | React + Vite | Cerebras LLM</p>
+    <p style="margin-top: 0.5rem;">Paste a GitHub URL. Get instant architecture docs.</p>
+</footer>
+
+<!-- Smooth scroll -->
+<script>
+document.querySelectorAll('nav a').forEach(a => {
+    a.addEventListener('click', e => {
+        e.preventDefault();
+        const t = document.querySelector(a.getAttribute('href'));
+        if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+});
+</script>
+
+</body>
+</html>

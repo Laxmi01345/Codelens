@@ -1,0 +1,7 @@
+fastapi
+pydantic
+uvicorn[standard]
+python-dotenv
+cerebras-cloud_sdk
+httpx
+psycopg2-binary
