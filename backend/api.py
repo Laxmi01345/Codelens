@@ -40,6 +40,7 @@ class AnalysisRequest(BaseModel):
 class ChatRequest(BaseModel):
     repo_url: str
     question: str
+    history: list[dict] = None  # Conversation history for memory
 
 
 class AnalysisResponse(BaseModel):
@@ -95,17 +96,52 @@ async def get_analysis(repo_url: str):
     return result
 
 
-# Chat endpoint
+# Chat endpoint (non-streaming)
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """Chat about a repository."""
     try:
-        answer = await chat_with_repo(request.repo_url, request.question)
+        answer = await chat_with_repo(
+            request.repo_url, 
+            request.question,
+            history=request.history,
+        )
         return ChatResponse(answer=answer)
     except GitHubAccessError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
+
+
+# Chat endpoint with streaming (SSE)
+@app.post("/api/chat/stream")
+async def chat_stream(request: ChatRequest):
+    """Stream chat response using Server-Sent Events."""
+    from fastapi.responses import StreamingResponse
+    
+    async def event_generator():
+        try:
+            response_generator = await chat_with_repo(
+                request.repo_url,
+                request.question,
+                history=request.history,
+                stream=True,
+            )
+            for chunk in response_generator:
+                yield f"data: {chunk}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            yield f"data: Error: {str(e)}\n\n"
+            yield "data: [DONE]\n\n"
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 # Issues endpoint
@@ -125,14 +161,19 @@ async def get_issues(repo_url: str, state: str = "open", limit: int = 20):
 # WebSocket for streaming chat
 @app.websocket("/api/ws/chat")
 async def websocket_chat(websocket: WebSocket):
-    """WebSocket endpoint for streaming chat."""
+    """WebSocket endpoint for streaming chat with conversation memory."""
     await websocket.accept()
+    
+    # Store conversation history per connection
+    conversation_history = []
+    max_history = 4  # Keep last 4 messages for memory
 
     try:
         while True:
             data = await websocket.receive_json()
             repo_url = data.get("repo_url")
             question = data.get("question")
+            use_streaming = data.get("stream", True)  # Default to streaming
 
             if not repo_url or not question:
                 await websocket.send_json({"error": "Missing repo_url or question"})
@@ -141,12 +182,51 @@ async def websocket_chat(websocket: WebSocket):
             await websocket.send_json({"status": "processing"})
 
             try:
-                answer = await chat_with_repo(repo_url, question)
-                await websocket.send_json({"answer": answer})
+                if use_streaming:
+                    # Streaming mode - send chunks as they arrive
+                    await websocket.send_json({"type": "stream_start"})
+                    
+                    response_generator = await chat_with_repo(
+                        repo_url, question,
+                        history=conversation_history,
+                        stream=True,
+                    )
+                    
+                    full_response = ""
+                    for chunk in response_generator:
+                        full_response += chunk
+                        await websocket.send_json({"type": "chunk", "content": chunk})
+                    
+                    # Add to conversation history
+                    conversation_history.append({"role": "user", "content": question})
+                    conversation_history.append({"role": "assistant", "content": full_response})
+                    
+                    # Trim history to keep only last N messages
+                    if len(conversation_history) > max_history * 2:
+                        conversation_history = conversation_history[-(max_history * 2):]
+                    
+                    await websocket.send_json({"type": "stream_end", "answer": full_response})
+                else:
+                    # Non-streaming mode
+                    answer = await chat_with_repo(
+                        repo_url, question,
+                        history=conversation_history,
+                    )
+                    
+                    # Add to conversation history
+                    conversation_history.append({"role": "user", "content": question})
+                    conversation_history.append({"role": "assistant", "content": answer})
+                    
+                    # Trim history
+                    if len(conversation_history) > max_history * 2:
+                        conversation_history = conversation_history[-(max_history * 2):]
+                    
+                    await websocket.send_json({"type": "answer", "answer": answer})
+                    
             except GitHubAccessError as e:
-                await websocket.send_json({"error": str(e)})
+                await websocket.send_json({"type": "error", "error": str(e)})
             except Exception as e:
-                await websocket.send_json({"error": str(e)})
+                await websocket.send_json({"type": "error", "error": str(e)})
 
     except WebSocketDisconnect:
         print("WebSocket client disconnected")

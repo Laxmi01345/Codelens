@@ -1,0 +1,187 @@
+# CodeLens - Docker Compose Configuration
+# Production-ready setup with all services
+
+version: '3.8'
+
+services:
+  # ──────────────────────────────────────────────
+  # Backend API
+  # ──────────────────────────────────────────────
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: codelens-api
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - QDRANT_URL=http://qdrant:6333
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/codelens
+      - CEREBRAS_API_KEY=${CEREBRAS_API_KEY}
+    depends_on:
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    restart: unless-stopped
+    networks:
+      - codelens-network
+
+  # ──────────────────────────────────────────────
+  # Celery Worker (Background Jobs)
+  # ──────────────────────────────────────────────
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: codelens-worker
+    command: celery -A tasks worker --loglevel=info --concurrency=2
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - QDRANT_URL=http://qdrant:6333
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/codelens
+      - CEREBRAS_API_KEY=${CEREBRAS_API_KEY}
+    depends_on:
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    restart: unless-stopped
+    networks:
+      - codelens-network
+
+  # ──────────────────────────────────────────────
+  # Redis (Message Broker + Cache)
+  # ──────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: codelens-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - codelens-network
+
+  # ──────────────────────────────────────────────
+  # Qdrant (Vector Database)
+  # ──────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: codelens-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    restart: unless-stopped
+    networks:
+      - codelens-network
+
+  # ──────────────────────────────────────────────
+  # PostgreSQL (Optional - Cache + History)
+  # ──────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: codelens-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=codelens
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - codelens-network
+
+  # ──────────────────────────────────────────────
+  # Frontend (React + Vite)
+  # ──────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: codelens-frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks:
+      - codelens-network
+
+  # ──────────────────────────────────────────────
+  # Prometheus (Monitoring)
+  # ──────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: codelens-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+    networks:
+      - codelens-network
+
+  # ──────────────────────────────────────────────
+  # Grafana (Dashboards)
+  # ──────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    container_name: codelens-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - codelens-network
+
+# ──────────────────────────────────────────────
+# Volumes (Persistent Data)
+# ──────────────────────────────────────────────
+volumes:
+  redis-data:
+  qdrant-data:
+  postgres-data:
+  prometheus-data:
+  grafana-data:
+
+# ──────────────────────────────────────────────
+# Networks
+# ──────────────────────────────────────────────
+networks:
+  codelens-network:
+    driver: bridge

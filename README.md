@@ -7,11 +7,15 @@
 ## Table of Contents
 
 - [Overview](#overview)
-- [Internal Flow](#internal-flow)
 - [Architecture](#architecture)
+- [Internal Flow](#internal-flow)
+- [4-Layer Hierarchical RAG](#4-layer-hierarchical-rag)
+- [Advanced RAG Components](#advanced-rag-components)
+- [Streaming & Conversation Memory](#streaming--conversation-memory)
 - [Tech Stack](#tech-stack)
 - [Repository Layout](#repository-layout)
-- [Quick Start](#quickstart)
+- [Quick Start](#quick-start)
+- [Docker Deployment](#docker-deployment)
 - [API Reference](#api-reference)
 - [Key Design Decisions](#key-design-decisions)
 
@@ -29,8 +33,8 @@ CodeLens is an AI-powered codebase analysis tool. It takes a GitHub repository U
    - Collapsible folder tree (sidebar)
    - 5 analysis sections rendered as markdown
    - Zoomable Mermaid architecture diagram
-   - Interactive chat panel at the bottom
-4. **Chat** — ask follow-up questions about the codebase
+   - Interactive chat panel at the bottom (with streaming)
+4. **Chat** — ask follow-up questions about the codebase (with conversation memory)
 
 ### What the System Generates
 
@@ -44,11 +48,52 @@ CodeLens is an AI-powered codebase analysis tool. It takes a GitHub repository U
 
 ---
 
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                      DEVELOPER                          │
+│                   (Enters GitHub URL)                    │
+└──────────────────────────┬──────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────┐
+│                  REACT + VITE FRONTEND                   │
+│                    (Port 5173)                           │
+│                                                         │
+│  HomePage ──► WikiPage ──► WikiTreeView (sidebar)       │
+│                           MarkdownRenderer (content)    │
+│                           MermaidDiagram (diagrams)     │
+│                           ChatPanel (streaming)         │
+└──────────────────────────┬──────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────┐
+│                  FASTAPI BACKEND                         │
+│                    (Port 8000)                           │
+│                                                         │
+│  api.py (SSE + WebSocket) ──► main.py (orchestrator)    │
+│       │                           │                     │
+│       │              ┌────────────┼────────────┐        │
+│       │              ▼            ▼            ▼        │
+│       │    repo_cloner.py  hybrid_analyzer  db_utils   │
+│       │    (git clone)     (Cerebras)      (PostgreSQL) │
+│       │              │                                 │
+│       │              ▼                                 │
+│       │    4-Layer Index + Hybrid Retriever             │
+│       │    (Embeddings + BM25 + RRF + Re-ranking)      │
+│       │                                                 │
+│       ▼              ▼            ▼                     │
+│   Celery Worker   Qdrant      Prometheus + Grafana      │
+│   (Background)   (Vectors)    (Monitoring)              │
+└─────────────────────────────────────────────────────────┘
+```
+
+---
+
 ## Internal Flow
 
-This is exactly what happens from the moment a user pastes a URL to seeing the result.
-
-### Step 1: User Enters URL
+### Step 1: User Enters GitHub URL
 
 ```
 User pastes: https://github.com/pallets/flask
@@ -72,68 +117,37 @@ FastAPI (api.py)
     └──► Cache MISS? → Start full analysis pipeline (~15 sec)
 ```
 
-### Step 3: Fetch Repository Data
+### Step 3: Clone Repository & Read Files
 
 ```
-repo_fetcher.py
+repo_cloner.py
     │
-    ├──► validate_repo()                    ── GitHub API: GET /repos/{owner}/{repo}
-    │    Returns: name, description, language, topics, default_branch
+    ├──► clone_repo()                    ── git clone --depth 1
+    │    Shallow clone to temp directory (~3-5 sec)
     │
-    ├──► get_file_tree(max_depth=3)         ── GitHub API: GET /repos/{owner}/{repo}/git/trees/{branch}?recursive=1
-    │    Returns: full directory structure as nested dict
+    ├──► read_all_files()                ── Local filesystem (os.walk)
+    │    Reads all source files (.py, .js, .ts, etc.)
+    │    Reads all config files (.gitignore, package.json, etc.)
+    │    No depth limits, no file count limits, no truncation
     │
-    ├──► fetch_key_files(file_tree)         ── GitHub API: GET /repos/{owner}/{repo}/contents/{path}
-    │    Reads: README.md, package.json, requirements.txt, pyproject.toml,
-    │           Cargo.toml, go.mod, pom.xml, Dockerfile, etc. (22 common names)
-    │    Returns: dict of {filename: content}
-    │
-    └──► fetch_source_files(file_tree)      ── GitHub API: multiple GET calls
-         Scans: src/, lib/, app/, internal/, pkg/ directories recursively
-         Reads: .py, .js, .ts, .go, .rs, .java, .rb, .php files
-         Truncates: each file to ~3000 chars
-         Returns: dict of {filepath: content}
+    └──► cleanup_repo()                  ── shutil.rmtree
+         Remove temp directory
 
-All of these run in parallel using asyncio.gather()
-Total: ~5-8 seconds depending on repo size
+Total: ~4-6 seconds. No API rate limits.
 ```
 
-### Step 4: Build LLM Prompt
+### Step 4: Build 4-Layer Index
 
 ```
-hybrid_prompts.py
+main.py → _get_or_build_index()
     │
-    ├──► System prompt (anti-hallucination rules)
-    │    "You are CodeLens, an expert software architect..."
-    │    "Every statement MUST reference a specific file path..."
-    │    "If information is not present, say 'Not found'..."
-    │
-    └──► User prompt (combined repo context)
-         ┌─────────────────────────────────────────┐
-         │ Repository: pallets/flask                │
-         │ Description: The Python micro framework  │
-         │ Language: Python                          │
-         │ Topics: [web, python, wsgi]              │
-         │                                          │
-         │ File Tree:                               │
-         │ ├── src/                                 │
-         │ │   └── flask/                           │
-         │ │       ├── __init__.py                  │
-         │ │       ├── app.py                       │
-         │ │       └── ...                          │
-         │                                          │
-         │ Config Files:                            │
-         │ --- requirements.txt ---                 │
-         │ Flask>=2.0                               │
-         │ Werkzeug>=2.0                            │
-         │ ...                                      │
-         │                                          │
-         │ Source Files:                            │
-         │ --- src/flask/app.py ---                 │
-         │ class Flask(__name__):                   │
-         │     def __init__(self, ...):             │
-         │         ...                              │
-         └─────────────────────────────────────────┘
+    ├──► Layer 1: File Metadata (path, language, size, lines)
+    ├──► Layer 2: AST Structure (functions, classes, imports)
+    ├──► Layer 3: Dependency Graph (import relationships)
+    └──► Layer 4: Code Chunks (function/class-level pieces)
+
+Embeddings: sentence-transformers (all-MiniLM-L6-v2)
+Index: SQLite + in-memory vectors
 ```
 
 ### Step 5: LLM Generates Analysis
@@ -141,227 +155,96 @@ hybrid_prompts.py
 ```
 Cerebras LLM (zai-glm-4.7)
     │
-    ├── Receives combined prompt (~10,000-50,000 tokens)
-    ├── Generates response (~2,000-4,000 tokens)
+    ├── Receives 4-layer context (~3-8K tokens)
+    ├── Generates all 5 sections in one response
     ├── Takes ~10-15 seconds
-    └── Returns structured output:
-
-## Section 1: Purpose & Scope
-Flask is a lightweight WSGI web application framework...
-
-## Section 2: Repository Layout
-```
-flask/
-├── src/flask/        # Core framework source
-├── tests/            # Test suite
-...
-```
-Pattern: modular layout
-
-## Section 3: Source Layer (Tech Stack)
-| Category | Technology | Evidence |
-|----------|------------|----------|
-| Language | Python | pyproject.toml |
-| Framework | Flask | src/flask/__init__.py |
-...
-
-## Section 4: Architecture
-```mermaid
-flowchart TD
-    A[Client Request] --> B[WSGI Server]
-    B --> C[Flask App]
-...
+    └── Returns structured output with headers
 ```
 
-## Section 5: RPC Protocol
-Flask uses WSGI protocol...
-```
-
-### Step 6: Parse Sections
-
-```
-hybrid_analyzer.py → parse_sections()
-    │
-    ├── Finds headers: ## Section N: Name, ## Name, # Name
-    ├── Splits response by headers
-    ├── Extracts content between consecutive headers
-    ├── Strips header lines from content (wiki page renders them separately)
-    └── Returns dict:
-        {
-            "purpose_scope": "Flask is a lightweight...",
-            "repo_layout": "```\nflask/\n├── src/flask/...",
-            "source_layer": "| Category | Technology |...",
-            "tech_stack": "| Category | Technology |...",
-            "architecture_text": "```mermaid\nflowchart TD\n..."
-        }
-```
-
-### Step 7: Cache + Return
+### Step 6: Cache + Return
 
 ```
 db_utils.py
     │
-    ├──► store_repo_analysis()
-    │    INSERT INTO repo_analysis (repo_url, purpose_scope, ...)
-    │    ON CONFLICT (repo_url) DO UPDATE SET ...
-    │
+    ├──► store_repo_analysis() → PostgreSQL UPSERT
     └──► Return to frontend as JSON
 
-Frontend receives response → stores in analysisCache Map
+Frontend stores in analysisCache Map
 ```
 
-### Step 8: Render Wiki Page
-
-```
-WikiPage.jsx
-    │
-    ├──► WikiTreeView.jsx
-    │    Parses repo_layout text tree
-    │    Renders collapsible folder structure
-    │    Click section → scroll to it
-    │
-    ├──► MarkdownRenderer.jsx
-    │    Converts each section's markdown to HTML
-    │    Handles: headers, bold, code blocks, tables, lists, links
-    │    Preserves tree characters (├──, └──, │) in code blocks
-    │
-    ├──► MermaidDiagram.jsx
-    │    Extracts ```mermaid blocks from architecture_text
-    │    Renders with mermaid.js library
-    │    Supports: zoom in/out, Ctrl+Scroll, drag to pan
-    │    Click diagram → fullscreen modal with blurred background
-    │
-    └──► ChatPanel.jsx
-         Floating bottom panel
-         User types question → POST /api/chat
-         Backend builds context from analysis + key files
-         Single LLM call → returns answer
-         Renders answer as markdown
-```
-
-### Chat Flow (Separate from Analysis)
+### Chat Flow (4-Layer RAG)
 
 ```
 User: "How does authentication work?"
     │
     ▼
-ChatPanel → POST /api/chat { repo_url, question }
+ChatPanel → POST /api/chat { repo_url, question, history }
     │
     ▼
 main.py → chat_with_repo()
     │
-    ├──► Get cached analysis from DB
-    │    purpose: "Flask is..."
-    │    tech_stack: "| Language | Python |..."
-    │    architecture: "```mermaid..."
-    │
-    ├──► Fetch key files (if not cached)
-    │    src/flask/app.py (first 1500 chars)
-    │    requirements.txt (full)
-    │    ...
-    │
-    ├──► Build context string
-    │    "Purpose: Flask is a...\nTech Stack:...\nArchitecture:...\n--- app.py ---\nclass Flask..."
-    │
-    ├──► Single LLM call
-    │    System: "You are CodeLens, answer based on context..."
-    │    User: "Repository: flask\n\nContext: ...\n\nQuestion: How does auth work?"
-    │
-    └──► Return answer
-         "Based on the codebase, Flask uses a session-based..."
+    ├──► Detect query type (summary vs specific)
+    ├──► Build 4-layer context (3K-8K tokens)
+    ├──► Single Cerebras LLM call
+    └──► Return streamed answer with citations
 ```
 
 ---
 
-## Architecture
+## 4-Layer Hierarchical RAG
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                      DEVELOPER                          │
-│                   (Enters GitHub URL)                    │
-└──────────────────────────┬──────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────┐
-│                  REACT + VITE FRONTEND                   │
-│                    (Port 5173)                           │
-│                                                         │
-│  HomePage ──► WikiPage ──► WikiTreeView (sidebar)       │
-│                           MarkdownRenderer (content)    │
-│                           MermaidDiagram (diagrams)     │
-│                           ChatPanel (bottom)            │
-└──────────────────────────┬──────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────┐
-│                  FASTAPI BACKEND                         │
-│                    (Port 8000)                           │
-│                                                         │
-│  api.py (endpoints) ──► main.py (orchestrator)          │
-│                              │                          │
-│                    ┌─────────┼──────────┐               │
-│                    ▼         ▼          ▼               │
-│            repo_fetcher  hybrid_    db_utils            │
-│            (GitHub API)  analyzer   (PostgreSQL)        │
-│                          (Cerebras)                     │
-└────────┬─────────────────┬──────────────┬──────────────┘
-         │                 │              │
-         ▼                 ▼              ▼
-┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-│  GITHUB API  │  │  CEREBRAS    │  │  POSTGRESQL  │
-│  (Rest API)  │  │  LLM         │  │  (Optional)  │
-│              │  │  zai-glm-4.7 │  │              │
-│  - Metadata  │  │              │  │  - Cache     │
-│  - File tree │  │  - Analysis  │  │  - History   │
-│  - Files     │  │  - Chat      │  │              │
-└──────────────┘  └──────────────┘  └──────────────┘
-```
+| Layer | Content | When Sent | Token Cost | Implementation |
+|---|---|---|---|---|
+| **Layer 1** | File metadata (path, language, size, lines) + config files | Always | ~1K tokens | `code_index.py` |
+| **Layer 2** | AST structure (functions, classes, imports) | Always | ~2K tokens | `code_index.py` |
+| **Layer 3** | Dependency graph (importers, imports) | Specific queries only | ~1-3K tokens | `query_builder.py` |
+| **Layer 4** | Code chunks (function/class bodies) via embeddings | Specific queries only | ~2-5K tokens | `chunker.py` + `code_index.py` |
 
-### MCP (Model Context Protocol) Layer
+### Smart Query Detection
 
-The backend uses MCP-compatible clients to interact with external services:
+| Query Type | Examples | Layers Used | Token Cost |
+|---|---|---|---|
+| **Summary** | "What does this project do?", "Overview" | Layers 1-2 only | ~3K tokens |
+| **Specific** | "Show me auth.py", "Who imports api.py?" | All 4 layers | ~8K tokens |
 
-```
-mcp_client/
-├── github_mcp.py       ──► Wraps GitHub REST API
-│   ├── validate_repo()     GET /repos/{owner}/{repo}
-│   ├── get_file_content()  GET /repos/{owner}/{repo}/contents/{path}
-│   ├── list_directory()    GET /repos/{owner}/{repo}/contents/{path}
-│   ├── get_file_tree()     GET /repos/{owner}/{repo}/git/trees/{branch}
-│   └── search_code()       GET /search/code?q=...+repo:...
-│
-├── tree_sitter_mcp.py  ──► AST parsing (with regex fallback)
-│   ├── get_ast()           Parse code → AST JSON
-│   ├── extract_symbols()   Find classes, functions, imports
-│   ├── analyze_complexity() Line counts, metrics
-│   └── find_references()   Symbol usage search
-│
-├── uml_mcp.py          ──► Diagram generation via Kroki.io
-│   ├── generate_diagram()  Render any diagram type
-│   ├── generate_mermaid()  Mermaid convenience method
-│   └── build_*_diagram()   Programmatic diagram builders
-│
-└── client.py           ──► MCP client manager
-    └── call_tool()         Unified interface for all servers
-```
+---
+
+## Advanced RAG Components
+
+Beyond basic RAG, CodeLens uses advanced retrieval techniques:
+
+1. **Query Expansion** — One question → 3 search queries for better recall
+2. **Code Property Graph** — AST + Control Flow + Data Flow in one graph
+3. **Multi-hop Retrieval** — Follows call chains to find related code
+4. **Cross-encoder Re-ranking** — Top-20 → Top-5 with ms-marco-MiniLM-L-6-v2
+5. **Hybrid Search** — BM25 + Embeddings + Reciprocal Rank Fusion
+
+---
+
+## Streaming & Conversation Memory
+
+- **SSE** via `POST /api/chat/stream` — token-by-token streaming
+- **WebSocket** via `WS /api/ws/chat` — bidirectional with JSON messages
+- **Conversation Memory** — last 4 exchanges per connection for follow-up context
 
 ---
 
 ## Tech Stack
 
-| Layer | Technology | Why This Choice |
+| Layer | Technology | Why |
 |---|---|---|
-| **Frontend** | React 19, Vite 5 | Fast dev server, mature ecosystem |
-| **Language** | Plain JavaScript | Simple SPA, no type overhead needed |
-| **Routing** | React Router v6 | SPA with nested routes |
-| **Styling** | Tailwind CSS 4 + custom CSS | Dark theme, emerald accents |
-| **Backend** | Python 3, FastAPI | Async support, auto-docs, Pydantic |
+| **Frontend** | React 19, Vite 5 | Fast dev, mature ecosystem |
+| **Language** | Plain JavaScript | Simple SPA, no type overhead |
+| **Backend** | Python 3, FastAPI | Async, auto-docs, Pydantic |
 | **LLM** | Cerebras (`zai-glm-4.7`) | Free tier, fast inference |
-| **Database** | PostgreSQL (psycopg2) | Optional caching, graceful fallback |
-| **External API** | GitHub REST API | Direct file access, no cloning |
-| **Diagrams** | Mermaid.js | Zoom/pan/fullscreen, dark theme |
-| **Fonts** | Inter + JetBrains Mono | Clean developer aesthetic |
-| **HTTP Client** | httpx (async) | Non-blocking GitHub API calls |
+| **Embeddings** | sentence-transformers (`all-MiniLM-L6-v2`) | Semantic search, runs locally |
+| **Re-ranking** | Cross-encoder (`ms-marco-MiniLM-L-6-v2`) | Precision after retrieval |
+| **Vector DB** | Qdrant | Persistent embeddings, filtering |
+| **Job Queue** | Celery + Redis | Background analysis |
+| **Database** | PostgreSQL (optional) | Analysis caching |
+| **Monitoring** | Prometheus + Grafana | Metrics + dashboards |
+| **API** | Git Clone | Complete file access, no limits |
+| **Diagrams** | Mermaid.js | Zoom/pan/fullscreen |
 
 ---
 
@@ -369,50 +252,59 @@ mcp_client/
 
 ```
 codelens/
-├── backend/                        # Python analysis engine
-│   ├── api.py                      # FastAPI app + endpoints
-│   ├── main.py                     # Orchestrator (generate_repo_analysis, chat_with_repo)
-│   ├── hybrid_analyzer.py          # Builds LLM prompt, calls Cerebras, parses sections
-│   ├── hybrid_prompts.py           # System prompts with anti-hallucination rules
-│   ├── repo_fetcher.py             # Parallel GitHub API fetching
-│   ├── llm_utils.py                # Cerebras client wrapper
-│   ├── db_utils.py                 # PostgreSQL operations (optional)
-│   ├── agent/                      # Old agentic loop (kept for reference)
-│   │   ├── agent_loop.py           #   Tool-use loop (8+ LLM calls)
-│   │   ├── tools.py                #   Tool definitions
-│   │   └── prompts.py              #   System prompts
-│   ├── mcp_client/                 # MCP-compatible API wrappers
-│   │   ├── github_mcp.py           #   GitHub REST API
-│   │   ├── tree_sitter_mcp.py      #   AST parsing + regex fallback
-│   │   ├── uml_mcp.py             #   Kroki diagram generation
-│   │   └── client.py              #   MCP client manager
-│   ├── .env                        # API keys (gitignored)
+├── backend/
+│   ├── api.py                      # FastAPI + SSE + WebSocket
+│   ├── main.py                     # Orchestrator (4-layer RAG)
+│   ├── hybrid_analyzer.py          # LLM prompt builder + parser
+│   ├── hybrid_prompts.py           # Anti-hallucination prompts
+│   ├── repo_cloner.py              # Shallow git clone + local reads
+│   ├── repo_fetcher.py             # Clone orchestrator + AST parsing
+│   ├── llm_utils.py                # Cerebras client
+│   ├── db_utils.py                 # PostgreSQL (optional)
+│   ├── hybrid_retriever.py         # BM25 + Embeddings + RRF + Re-ranking
+│   ├── vector_store.py             # Qdrant vector DB integration
+│   ├── tasks.py                    # Celery background jobs
+│   ├── analysis/
+│   │   ├── pipeline.py             # Static analysis orchestrator
+│   │   ├── ast_parser.py           # Regex AST parser (5 languages)
+│   │   ├── graph_builder.py        # Dependency graph builder
+│   │   ├── file_cache.py           # SHA-256 file cache
+│   │   ├── chunker.py              # AST-aware code chunking
+│   │   ├── code_index.py           # Embeddings semantic search
+│   │   ├── query_builder.py        # 4-layer context builder
+│   │   ├── code_property_graph.py  # AST + CFG + DFG
+│   │   ├── call_graph.py           # Function call graph
+│   │   ├── query_expansion.py      # Query expansion
+│   │   ├── multi_hop_retrieval.py  # Multi-hop retrieval
+│   │   └── reranking.py            # Cross-encoder re-ranking
+│   ├── github_client/
+│   │   └── github.py               # GitHub API (validate, issues)
+│   ├── monitoring/
+│   │   ├── prometheus.yml
+│   │   └── grafana/
+│   ├── docker-compose.yml          # All services
+│   ├── Dockerfile
 │   ├── requirements.txt
-│   └── .venv/
+│   └── .env
 │
-├── frontend/                       # React 19 + Vite 5
-│   ├── index.html                  # Entry HTML + Google Fonts
-│   ├── vite.config.js
+├── frontend/
+│   ├── src/
+│   │   ├── main.jsx
+│   │   ├── App.jsx
+│   │   ├── api/client.js
+│   │   ├── pages/
+│   │   │   ├── HomePage.jsx
+│   │   │   └── WikiPage.jsx
+│   │   └── components/
+│   │       ├── Header.jsx
+│   │       ├── WikiTreeView.jsx
+│   │       ├── MarkdownRenderer.jsx
+│   │       ├── MermaidDiagram.jsx
+│   │       └── ChatPanel.jsx
 │   ├── package.json
-│   ├── public/
-│   │   └── favicon.svg             # Green book icon
-│   └── src/
-│       ├── main.jsx                # App entry (StrictMode removed)
-│       ├── App.jsx                 # Router setup
-│       ├── index.css               # Global dark theme styles
-│       ├── api/
-│       │   └── client.js           # API calls + in-memory analysisCache
-│       ├── pages/
-│       │   ├── HomePage.jsx        # Landing page (URL input)
-│       │   └── WikiPage.jsx        # Full-screen wiki layout
-│       └── components/
-│           ├── Header.jsx          # Only shown on HomePage
-│           ├── WikiTreeView.jsx    # Folder tree + section navigation
-│           ├── MarkdownRenderer.jsx # Markdown → HTML
-│           ├── MermaidDiagram.jsx  # Zoom/pan/fullscreen diagrams
-│           └── ChatPanel.jsx       # Bottom floating chat
+│   └── vite.config.js
 │
-└── architecture.html               # Full architecture doc + 45 interview Q&As
+└── architecture.html               # Architecture doc + interview Q&As
 ```
 
 ---
@@ -435,15 +327,12 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 # Configure .env
-cat > .env << EOF
-CEREBRAS_API_KEY=your_cerebras_api_key
-GITHUB_TOKEN=ghp_your_github_token
-DATABASE_URL=postgresql://user:pass@localhost:5432/repo_analysis_db
-EOF
+# CEREBRAS_API_KEY=your_cerebras_api_key
+# DATABASE_URL=postgresql://... (optional)
 
-# Start server
-uvicorn api:app --reload --port 8000
-# API docs available at http://localhost:8000/docs
+# Start server (use python -m, NOT bare uvicorn)
+python -m uvicorn api:app --reload --port 8000
+# API docs at http://localhost:8000/docs
 ```
 
 ### Frontend
@@ -457,9 +346,6 @@ npm install
 # Start dev server
 npm run dev
 # Opens at http://localhost:5173
-
-# Build for production
-npm run build
 ```
 
 ### Environment Variables
@@ -468,12 +354,31 @@ npm run build
 # Required
 CEREBRAS_API_KEY=your_cerebras_api_key
 
-# Optional (increases GitHub rate limit from 60 to 5000 req/hr)
-GITHUB_TOKEN=ghp_your_github_token
-
-# Optional (enables analysis caching)
-DATABASE_URL=postgresql://user:pass@localhost:5432/repo_analysis_db
+# Optional
+GITHUB_TOKEN=ghp_your_github_token    # increases rate limit
+DATABASE_URL=postgresql://...         # enables analysis caching
 ```
+
+---
+
+## Docker Deployment
+
+```bash
+cd codelens/backend
+
+# Configure environment
+echo "CEREBRAS_API_KEY=your_key" > .env
+
+# Start all services
+docker compose up -d
+
+# Access:
+# Frontend: http://localhost:5173
+# API: http://localhost:8000
+# Grafana: http://localhost:3000
+```
+
+**Services:** API (FastAPI) · Worker (Celery) · Redis · Qdrant · PostgreSQL · Frontend (React) · Prometheus · Grafana
 
 ---
 
@@ -485,87 +390,77 @@ Generate or retrieve cached repository analysis.
 
 ```json
 // Request
-{
-  "repo_url": "https://github.com/pallets/flask",
-  "force_refresh": false
-}
+{ "repo_url": "https://github.com/pallets/flask", "force_refresh": false }
 
 // Response
 {
-  "repo_url": "https://github.com/pallets/flask",
-  "purpose_scope": "Flask is a lightweight WSGI web application framework...",
-  "repo_layout": "```\nflask/\n├── src/flask/\n│   ├── __init__.py\n...",
-  "source_layer": "| Category | Technology | Evidence |\n|----------|------------|----------|...",
-  "tech_stack": "| Category | Technology | Evidence |\n|----------|------------|----------|...",
-  "architecture_text": "```mermaid\nflowchart TD\n    A[Client] --> B[WSGI]...\n```"
+  "repo_url": "...",
+  "purpose_scope": "...",
+  "repo_layout": "...",
+  "source_layer": "...",
+  "tech_stack": "...",
+  "architecture_text": "..."
 }
 ```
 
 ### POST /api/chat
 
-Ask a question about a repository.
+Ask a question (supports streaming via `history`).
 
 ```json
 // Request
-{
-  "repo_url": "https://github.com/pallets/flask",
-  "question": "How does the routing system work?"
-}
+{ "repo_url": "...", "question": "How does routing work?", "history": [] }
 
 // Response
-{
-  "answer": "Flask's routing system works by using the @app.route() decorator..."
-}
+{ "answer": "Flask's routing uses @app.route() decorator..." }
 ```
+
+### POST /api/chat/stream
+
+SSE streaming endpoint. Returns `text/event-stream`.
+
+### WS /api/ws/chat
+
+WebSocket with conversation memory (last 4 exchanges).
 
 ### GET /api/analysis/{repo_url}
 
-Retrieve cached analysis (read-only, returns 404 if not cached).
+Retrieve cached analysis (read-only, 404 if not cached).
+
+### GET /api/issues/{repo_url}
+
+Fetch GitHub issues for a repository.
 
 ---
 
 ## Key Design Decisions
 
-### Why MCP Instead of Traditional RAG?
+### Why Git Clone Instead of GitHub API?
 
-Traditional RAG chunks text → embeds → stores in vector DB → retrieves similar chunks. This project uses MCP-compatible clients for **direct, precise file retrieval** instead of semantic search.
-
-| Aspect | MCP Approach | Traditional RAG |
+| Aspect | Git Clone (Current) | GitHub API (Previous) |
 |---|---|---|
-| Retrieval | Exact file paths | Semantic similarity |
-| Code structure | Preserved (whole files) | Broken (chunks) |
-| Cost | Free (GitHub API) | Embedding API costs |
-| Complexity | Simple (API calls) | Complex (vector DB) |
-| Best for | Single repo analysis | Large doc collections |
+| File access | All files, no limits | Depth 3, 15 files/dir |
+| Content | Full, no truncation | Truncated to 2000 chars |
+| Rate limits | None (local reads) | 5000 req/hr |
+| Speed | ~3-5 seconds | ~5-8 seconds (serial) |
 
-### Why PostgreSQL is Optional
+### Why 4-Layer RAG?
 
-The system works without a database. If PostgreSQL is unavailable:
-- Analysis regenerates on every request (~15 sec)
-- Frontend `analysisCache` Map prevents duplicates within a session
-- No configuration required for local development
+- **Token savings:** Summary queries use ~3K tokens (94% savings), specific queries use ~8K tokens (84% savings)
+- **Full awareness:** Layers 1-2 always sent, giving complete codebase structure
+- **Relevant details:** Layers 3-4 retrieved via embeddings, not dump-everything
 
-### Why Recursive Source File Fetching
+### Why Config Files in the Index?
 
-Initial version only read top-level files. Repos like Flask have source code in `src/flask/` subdirectories. `_fetch_code_files_recursive()` scans all source directories up to 3 levels deep.
+Config files like `.gitignore`, `package.json`, `Dockerfile` are now indexed alongside source files. This allows the LLM to answer questions about project configuration, build systems, and deployment setup.
 
-### Why No README Fallback
+### Why PostgreSQL is Optional?
 
-Many repos have no README. The system falls back through:
-GitHub description → topics → package.json → pyproject.toml → source docstrings
+The system checks `DB_AVAILABLE` at startup. If PostgreSQL isn't available, every DB operation returns `None` or skips silently. Developers can run without setting up a database.
 
-### Why StrictMode Was Removed
+### Why python -m uvicorn?
 
-React StrictMode double-invokes effects in development, causing duplicate API calls. Removed because the performance cost of duplicate LLM calls outweighs StrictMode's benefits.
-
-### Anti-Hallucination Rules
-
-The LLM is given strict constraints:
-1. Every statement must cite a specific file path
-2. Use ONLY provided data — no guessing
-3. Say "Not found in provided files" for missing info
-4. Don't invent file names, function names, or code
-5. Tech stack only from config files (package.json, requirements.txt, etc.)
+The `uvicorn.exe` shim can point to the wrong Python environment. Using `python -m uvicorn` ensures the correct venv Python is used.
 
 ---
 

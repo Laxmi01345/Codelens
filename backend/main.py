@@ -14,12 +14,50 @@ from hybrid_analyzer import analyze_all_sections
 from db_utils import store_repo_analysis, get_repo_analysis
 from analysis.pipeline import AnalysisPipeline
 from analysis.file_cache import FileCache
+from analysis.chunker import chunk_all_files
+from analysis.code_index import build_code_index, CodeIndex
+from analysis.query_builder import build_4layer_context
 
 load_dotenv()
 
 # Initialize analysis pipeline
 _analysis_cache = FileCache(default_ttl=3600.0)
 _analysis_pipeline = AnalysisPipeline(cache=_analysis_cache)
+
+# Cache for code indexes (repo_url -> CodeIndex)
+_code_index_cache: dict[str, CodeIndex] = {}
+
+
+def _get_or_build_index(repo_url: str, repo_data: dict, graph=None) -> CodeIndex:
+    """Get cached code index or build a new one."""
+    if repo_url in _code_index_cache:
+        return _code_index_cache[repo_url]
+    
+    source_files = repo_data.get("source_files", {})
+    key_files = repo_data.get("key_files", {})
+    # Include config files in the index so the LLM can answer questions about them
+    all_files = {**source_files, **key_files}
+    asts = repo_data.get("asts", [])
+    
+    # Chunk all files into semantic units
+    chunks = chunk_all_files(all_files, asts)
+    print(f"[Index] Created {len(chunks)} code chunks from {len(all_files)} files ({len(source_files)} source + {len(key_files)} config)")
+    
+    # Build the 4-layer index
+    try:
+        index = build_code_index(all_files, chunks, graph)
+    except Exception as e:
+        print(f"[Index] ERROR building index: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+    stats = index.get_stats()
+    print(f"[Index] Built index: {stats['files']} files, {stats['asts']} ASTs, "
+          f"{stats['chunks']} chunks, {stats['dependencies']} deps")
+    
+    # Cache for future queries
+    _code_index_cache[repo_url] = index
+    return index
 
 
 async def generate_repo_analysis(repo_url: str, force_refresh: bool = False) -> dict:
@@ -43,6 +81,9 @@ async def generate_repo_analysis(repo_url: str, force_refresh: bool = False) -> 
         if cached:
             print(f"[Main] Using cached analysis for {repo_url}")
             return cached
+
+    # Clear code index cache so it rebuilds with all files
+    _code_index_cache.pop(repo_url, None)
 
     print(f"[Main] Starting analysis for {repo_url}")
 
@@ -72,8 +113,19 @@ async def generate_repo_analysis(repo_url: str, force_refresh: bool = False) -> 
     except Exception as e:
         print(f"[Main] Warning: Static analysis failed: {e}")
 
-    # Step 3: Analyze all sections (single LLM call)
-    print("[Main] Analyzing repository (single LLM call)...")
+    # Step 3: Build 4-layer index for documentation generation
+    print("[Main] Building 4-layer index...")
+    index = _get_or_build_index(repo_url, repo_data, analysis_ctx.graph if 'analysis_ctx' in dir() else None)
+    
+    # Step 4: Build 4-layer context for documentation prompt
+    print("[Main] Building 4-layer context for documentation...")
+    from analysis.query_builder import build_4layer_context
+    doc_context = build_4layer_context(index, "Generate comprehensive documentation for this repository", repo_url)
+    repo_data["four_layer_context"] = doc_context
+    print(f"[Main] 4-layer context length: {len(doc_context)} chars")
+
+    # Step 5: Analyze all sections (single LLM call with 4-layer context)
+    print("[Main] Analyzing repository (single LLM call with 4-layer context)...")
     try:
         sections = analyze_all_sections(repo_data)
     except Exception as e:
@@ -105,12 +157,19 @@ async def chat_with_repo(
     repo_url: str,
     question: str,
     history: list[dict] = None,
+    stream: bool = False,
 ) -> str:
-    """Interactive chat about a repository using single LLM call with context."""
+    """
+    Interactive chat about a repository using 4-layer hierarchical context.
+    
+    Args:
+        repo_url: GitHub repository URL
+        question: User's question
+        history: Previous conversation messages (list of {"role": "user/assistant", "content": "..."})
+        stream: If True, return a generator that yields chunks (for streaming)
+    """
     from cerebras.cloud.sdk import Cerebras
     from dotenv import load_dotenv
-    from repo_fetcher import fetch_repo_data
-    from db_utils import get_repo_analysis
     from github_client.github import GitHubClient
 
     load_dotenv()
@@ -121,15 +180,27 @@ async def chat_with_repo(
 
     client = Cerebras(api_key=api_key)
 
-    # Get analysis context from cache/DB
-    analysis = get_repo_analysis(repo_url)
+    # Fetch repo data if not cached
+    if repo_url not in _code_index_cache:
+        print(f"[Chat] Building code index for {repo_url}...")
+        repo_data = await fetch_repo_data(repo_url)
+        
+        # Build the 4-layer index
+        analysis_ctx = await _analysis_pipeline.analyze(
+            repo_url=repo_url,
+            source_files=repo_data.get("source_files", {}),
+            key_files=repo_data.get("key_files", {}),
+            force_refresh=False,
+        )
+        _get_or_build_index(repo_url, repo_data, analysis_ctx.graph)
+    else:
+        print(f"[Chat] Using cached index for {repo_url}")
 
-    # Build context
-    context_parts = []
-    if analysis:
-        context_parts.append(f"Purpose: {analysis.get('purpose_scope', 'N/A')[:1000]}")
-        context_parts.append(f"Tech Stack: {analysis.get('tech_stack', 'N/A')[:1000]}")
-        context_parts.append(f"Architecture: {analysis.get('architecture_text', 'N/A')[:1000]}")
+    index = _code_index_cache[repo_url]
+
+    # Build 4-layer context
+    context = build_4layer_context(index, question, repo_url)
+    print(f"[Chat] Context length: {len(context)} chars")
 
     # Check if question is about issues
     issue_keywords = ["issue", "issues", "bug", "bugs", "feature request", "problem", "error"]
@@ -146,41 +217,63 @@ async def chat_with_repo(
                     f" Labels: {', '.join(issue['labels']) if issue['labels'] else 'none'}"
                     for issue in issues
                 ])
-                context_parts.append(f"\n## Open Issues (showing {len(issues)} most recent):\n{issues_str}")
+                context += f"\n\n## Open Issues (showing {len(issues)} most recent):\n{issues_str}"
         except Exception as e:
             print(f"[Chat] Warning: Could not fetch issues: {e}")
 
-    # Also fetch key files for direct context
-    try:
-        repo_data = await fetch_repo_data(repo_url)
-        for name, content in list(repo_data.get("key_files", {}).items())[:5]:
-            context_parts.append(f"\n--- {name} ---\n{content[:1500]}")
-        for name, content in list(repo_data.get("source_files", {}).items())[:5]:
-            context_parts.append(f"\n--- {name} ---\n{content[:1500]}")
-    except Exception as e:
-        print(f"[Chat] Warning: Could not fetch repo data: {e}")
-
-    context = "\n".join(context_parts)
-
+    # Build messages with conversation memory
     messages = [
         {"role": "system", "content": """You are CodeLens, an interactive code assistant.
 You help users understand the codebase by answering questions about a GitHub repository.
 
+You have access to a 4-layer hierarchical context:
+- Layer 1: File metadata (names, sizes, languages)
+- Layer 2: AST structure (functions, classes, imports)
+- Layer 3: Dependency graph (which files import what)
+- Layer 4: Relevant code chunks (actual function/class bodies)
+
 Rules:
 1. Answer based ONLY on the provided context
-2. Cite specific file paths when making observations
+2. Cite specific file paths and function names when making observations
 3. Be concise but thorough
 4. If information is not in the context, say so
 5. Use code examples when helpful
-6. When asked about issues, list them with numbers and titles"""},
-        {"role": "user", "content": f"Repository: {repo_url}\n\nContext:\n{context}\n\nQuestion: {question}"},
+6. When asked about issues, list them with numbers and titles
+7. When asked about specific files, reference Layer 2 for structure and Layer 4 for code
+8. When asked about dependencies, reference Layer 3
+9. Remember the conversation context - if user asks follow-up questions, reference previous messages"""},
     ]
+    
+    # Add conversation history (last 4 messages for memory)
+    if history:
+        for msg in history[-4:]:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+    
+    # Add current context + question
+    messages.append({"role": "user", "content": f"Repository: {repo_url}\n\nContext:\n{context}\n\nQuestion: {question}"})
 
+    # Streaming mode - return generator
+    if stream:
+        def stream_response():
+            response = client.chat.completions.create(
+                model="zai-glm-4.7",
+                messages=messages,
+                max_tokens=2048,
+                stream=True,
+            )
+            for chunk in response:
+                if chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+        return stream_response()
+
+    # Non-streaming mode
     response = client.chat.completions.create(
         model="zai-glm-4.7",
         messages=messages,
         max_tokens=2048,
     )
+
+    return response.choices[0].message.content or "No response generated."
 
     return response.choices[0].message.content or "No response generated."
 

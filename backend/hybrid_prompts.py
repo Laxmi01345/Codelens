@@ -25,6 +25,7 @@ def build_hybrid_prompt(repo_data: dict) -> str:
             - source_files: Content of main source files
             - asts: Parsed AST data (optional)
             - graph_summary: Dependency graph summary (optional)
+            - four_layer_context: 4-layer hierarchical context (optional)
 
     Returns:
         Combined prompt string
@@ -35,6 +36,11 @@ def build_hybrid_prompt(repo_data: dict) -> str:
     source_files = repo_data.get("source_files", {})
     asts = repo_data.get("asts", [])
     graph_summary = repo_data.get("graph_summary", {})
+    four_layer_context = repo_data.get("four_layer_context", "")
+
+    # Use 4-layer context if available, otherwise fall back to traditional format
+    if four_layer_context:
+        return _build_4layer_prompt(repo_info, key_files, four_layer_context)
 
     # Format file tree
     tree_str = _format_file_tree(file_tree)
@@ -207,6 +213,160 @@ Based on the directory structure and source file contents provided above:
 1. **Architecture Overview**: 2-3 paragraphs describing the actual architecture based on files
 2. **Component Diagram**: Generate a Mermaid class diagram using ONLY classes/components found in the source files. Use the static analysis data above to identify classes and their relationships.
 3. **Data Flow**: Generate a Mermaid flowchart based on actual code paths. Use the dependency graph data above to show module relationships.
+4. **Key Patterns**: Identify design patterns actually used in the code
+
+IMPORTANT: Only include components that exist in the provided source files. Do NOT invent components.
+
+Generate valid Mermaid code for diagrams:
+```mermaid
+classDiagram
+    ...
+```
+
+```mermaid
+flowchart TD
+    ...
+```
+"""
+    return prompt
+
+
+def _build_4layer_prompt(repo_info: dict, key_files: dict, four_layer_context: str) -> str:
+    """
+    Build a prompt using 4-layer hierarchical context.
+    
+    This replaces the traditional prompt that dumps all files.
+    The 4-layer context provides:
+    - Layer 1: File metadata (always)
+    - Layer 2: AST structure (always)
+    - Layer 3: Dependencies (question-driven)
+    - Layer 4: Code chunks (question-driven)
+    """
+    topics = repo_info.get("topics", [])
+    topics_str = ", ".join(topics) if topics else "None"
+    
+    # Format key files (only config files, not source)
+    key_files_str = ""
+    for name, content in key_files.items():
+        limited_content = content[:3000] if len(content) > 3000 else content
+        key_files_str += f"\n### FILE: {name}\n```\n{limited_content}\n```\n"
+    
+    prompt = f"""=== REPOSITORY DATA BELOW — USE ONLY THIS DATA ===
+
+## Repository Metadata
+- URL: https://github.com/{repo_info.get('name', 'unknown')}
+- Description: {repo_info.get('description', 'No description provided on GitHub')}
+- Primary Language: {repo_info.get('language', 'Not specified')}
+- Default Branch: {repo_info.get('default_branch', 'main')}
+- Topics/Tags: {topics_str}
+
+## Config File Contents (actual file contents from the repo)
+{key_files_str if key_files_str else "No configuration files were found in the repository root."}
+
+## 4-Layer Hierarchical Context
+{four_layer_context}
+
+=== END OF REPOSITORY DATA ===
+
+Now generate documentation based ONLY on the data above. Every claim must cite a specific file path from the data above.
+
+---
+
+## Section 1: Purpose & Scope
+
+Write 2-4 paragraphs covering:
+- What does this project do?
+- Who is it for?
+- What are its main capabilities?
+- What is its current status?
+
+IMPORTANT: Determine project purpose from these sources (in order of priority):
+1. README.md content (if present)
+2. Repository description from GitHub metadata
+3. package.json "description" field, pyproject.toml "description" field, or similar
+4. Docstrings in main entry point files (e.g., __init__.py, main.py, app.py)
+5. File and directory names that indicate purpose
+
+Cite your source: "As stated in README.md...", "According to pyproject.toml...", "Based on the GitHub description..."
+
+---
+
+## Section 2: Repository Layout
+
+Output the directory tree using the EXACT format below. Use the real file/folder names from the repository data provided above.
+
+Example format (copy this exact style):
+
+```
+my-project/
+├── .gitignore
+├── README.md
+├── package.json
+├── src/
+│   ├── assets/
+│   │   └── logo.png
+│   ├── components/
+│   │   ├── Button.js
+│   │   └── Navbar.js
+│   └── index.js
+└── tests/
+    └── alpha.test.js
+```
+
+Rules:
+- Use ├── for items that have more items below them
+- Use └── for the last item in a folder
+- Use │ for vertical lines connecting items in nested folders
+- Indent with spaces to show nesting depth
+- Include actual file names and folder names from the repository
+- Show 2-3 levels deep, not everything
+
+After the tree, add a blank line and a short paragraph explaining the folder structure pattern.
+
+---
+
+## Section 3: Source Layer
+
+List key source files with their actual roles, based on the 4-layer context provided above.
+
+You MUST use a Markdown table:
+
+| File | Purpose |
+|------|---------|
+| src/flask/__init__.py | Package init, exports Flask class |
+| src/flask/app.py | Main Flask application class |
+| src/flask/cli.py | CLI command definitions |
+
+List 5-10 most important files.
+
+---
+
+## Section 4: Technology Stack
+
+Identify technologies from the actual config files and source code provided above.
+
+You MUST use a Markdown table in this exact format:
+
+| Category | Technology | Evidence |
+|----------|------------|----------|
+| Language | Python | repo_info.language, .py file extensions |
+| Backend Framework | FastAPI | import in backend/app/api.py |
+| Vector Database | ChromaDB | import in backend/app/database.py |
+| Frontend Framework | React 19 | package.json dependencies |
+| Build Tool | Vite | vite.config.js present |
+| Deployment | Docker | Dockerfile present |
+
+Only list technologies with actual evidence from the provided files.
+
+---
+
+## Section 5: Architecture
+
+Based on the 4-layer context provided above:
+
+1. **Architecture Overview**: 2-3 paragraphs describing the actual architecture based on files
+2. **Component Diagram**: Generate a Mermaid class diagram using ONLY classes/components found in the source files. Use the Layer 2 (AST structure) data above to identify classes and their relationships.
+3. **Data Flow**: Generate a Mermaid flowchart based on actual code paths. Use the Layer 3 (dependency graph) data above to show module relationships.
 4. **Key Patterns**: Identify design patterns actually used in the code
 
 IMPORTANT: Only include components that exist in the provided source files. Do NOT invent components.
