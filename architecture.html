@@ -342,7 +342,6 @@
     <a href="#overview">Overview</a>
     <a href="#why">Why This Design</a>
     <a href="#4layer">4-Layer RAG</a>
-    <a href="#advanced-rag">Advanced RAG</a>
     <a href="#flow">Internal Flow</a>
     <a href="#streaming">Streaming</a>
     <a href="#backend">Backend</a>
@@ -363,7 +362,7 @@
 <!-- ════════════════ 1. OVERVIEW ════════════════ -->
 <section id="overview">
     <h2><span class="num">1</span> System Overview</h2>
-    <p>CodeLens is a GitHub repository analysis tool. A user pastes a repo URL, and the system shallow-clones the repository, reads all source and config files locally, builds a 4-layer hierarchical index (file metadata, AST structure, dependency graph, code chunks), generates a comprehensive 5-section architecture document using a single LLM call, caches it in PostgreSQL, and displays it in a modern dark-theme UI with zoomable Mermaid diagrams and an interactive chat powered by hybrid search (BM25 + embeddings + cross-encoder re-ranking) with streaming and conversation memory.</p>
+    <p>CodeLens is a GitHub repository analysis tool. A user pastes a repo URL, and the system shallow-clones the repository, reads all source and config files locally, builds a 4-layer hierarchical index (file metadata, AST structure, dependency graph, code chunks), generates a comprehensive 5-section architecture document using a single LLM call, caches it in PostgreSQL, and displays it in a modern dark-theme UI with zoomable Mermaid diagrams and an interactive chat powered by embeddings semantic search with streaming and conversation memory.</p>
 
     <div class="card-glow">
         <div class="arch-diagram">
@@ -419,7 +418,7 @@
 
     <h3>Why 4-Layer Hierarchical RAG?</h3>
     <div class="card">
-        <p><strong>Token efficiency + full awareness.</strong> The old approach sent all files to the LLM (50K+ tokens), causing context rot and high costs. The 4-layer approach sends file metadata + AST structure always (~3K tokens for full awareness), then retrieves dependencies + code chunks only when relevant (~5K tokens via BM25). Total: ~8K tokens per query with better output quality.</p>
+        <p><strong>Token efficiency + full awareness.</strong> The old approach sent all files to the LLM (50K+ tokens), causing context rot and high costs. The 4-layer approach sends file metadata + AST structure always (~3K tokens for full awareness), then retrieves dependencies + code chunks only when relevant (~5K tokens via embeddings search). Total: ~8K tokens per query with better output quality.</p>
     </div>
 
     <h3>Why Cerebras?</h3>
@@ -479,7 +478,7 @@
             <tr><td><strong>Layer 1</strong></td><td>File metadata (path, language, size, lines)</td><td>Always</td><td>~1K tokens</td><td><code class="mono">code_index.py</code></td></tr>
             <tr><td><strong>Layer 2</strong></td><td>AST structure (functions, classes, imports)</td><td>Always</td><td>~2K tokens</td><td><code class="mono">code_index.py</code></td></tr>
             <tr><td><strong>Layer 3</strong></td><td>Dependency graph (importers, imports)</td><td>Specific queries only</td><td>~1-3K tokens</td><td><code class="mono">query_builder.py</code></td></tr>
-            <tr><td><strong>Layer 4</strong></td><td>Code chunks (function/class bodies)</td><td>Specific queries only</td><td>~2-5K tokens</td><td><code class="mono">chunker.py</code> + <code class="mono">code_index.py</code></td></tr>
+            <tr><td><strong>Layer 4</strong></td><td>Code chunks (function/class bodies)</td><td>Specific queries only</td><td>~2-5K tokens</td><td><code class="mono">code_index.py</code></td></tr>
         </tbody>
     </table>
 
@@ -591,138 +590,9 @@ context = build_4layer_context(index, question, repo_url)
     </div>
 </section>
 
-<!-- ════════════════ ADVANCED RAG ════════════════ -->
-<section id="advanced-rag">
-    <h2><span class="num">4</span> Advanced RAG Components</h2>
-    <p>Beyond basic RAG, CodeLens uses advanced retrieval techniques for better accuracy and recall.</p>
-
-    <div class="card-glow">
-        <div class="arch-diagram">
-            <div class="arch-box" style="background: linear-gradient(135deg, #64748b, #94a3b8); color: white;">User Question</div>
-            <div class="arrow">&darr;</div>
-            <div class="arch-box" style="background: linear-gradient(135deg, #3b82f6, #60a5fa); color: white;">Query Expansion<small>3 search queries per question</small></div>
-            <div class="arrow">&darr;</div>
-            <div style="display: flex; gap: 1rem; justify-content: center;">
-                <div class="arch-box" style="background: linear-gradient(135deg, #10b981, #34d399); color: white;">Multi-hop Retrieval<small>Follow call chains</small></div>
-                <div class="arch-box" style="background: linear-gradient(135deg, #8b5cf6, #a78bfa); color: white;">Code Property Graph<small>AST + Control + Data Flow</small></div>
-            </div>
-            <div class="arrow">&darr;</div>
-            <div class="arch-box" style="background: linear-gradient(135deg, #f59e0b, #fbbf24); color: white;">Re-ranking<small>Cross-encoder precision</small></div>
-            <div class="arrow">&darr;</div>
-            <div class="arch-box" style="background: linear-gradient(135deg, #ef4444, #f87171); color: white;">Top-5 Results for LLM</div>
-        </div>
-    </div>
-
-    <div class="grid-2">
-        <div class="card">
-            <h3>1. Query Expansion</h3>
-            <p>Expands one question into multiple search queries for better recall.</p>
-            <pre><span class="comment"># analysis/query_expansion.py</span>
-<span class="keyword">class</span> <span class="func">QueryExpander</span>:
-    <span class="keyword">def</span> <span class="func">expand</span>(self, question):
-        <span class="comment"># Rule-based expansion</span>
-        keywords = extract_keywords(question)
-        variations = generate_variations(keywords)
-        <span class="keyword">return</span> [question] + variations[:3]
-
-<span class="comment"># Example:</span>
-<span class="comment"># "How does auth work?"</span>
-<span class="comment"># → ["How does auth work?",</span>
-<span class="comment">#    "authentication login validate",</span>
-<span class="comment">#    "auth session token JWT"]</span></pre>
-        </div>
-        <div class="card">
-            <h3>2. Code Property Graph</h3>
-            <p>Combines AST + Control Flow + Data Flow in one graph.</p>
-            <pre><span class="comment"># analysis/code_property_graph.py</span>
-<span class="keyword">class</span> <span class="func">CodePropertyGraph</span>:
-    <span class="comment"># Node types:</span>
-    <span class="comment">#   FUNCTION, CLASS, CALL, VARIABLE</span>
-    
-    <span class="comment"># Edge types:</span>
-    <span class="comment">#   DEFINES, CONTAINS, CALLS</span>
-    <span class="comment">#   USES, PASSES, RETURNS</span>
-    
-    <span class="keyword">def</span> <span class="func">get_impact_analysis</span>(self, func):
-        <span class="keyword">return</span> {
-            <span class="string">"callers"</span>: self.get_callers(func),
-            <span class="string">"callees"</span>: self.get_callees(func),
-            <span class="string">"data_flow"</span>: self.get_data_flow(func),
-        }</pre>
-        </div>
-    </div>
-
-    <div class="grid-2">
-        <div class="card">
-            <h3>3. Multi-hop Retrieval</h3>
-            <p>Follows call chains to find related code the user might need.</p>
-            <pre><span class="comment"># analysis/multi_hop_retrieval.py</span>
-<span class="keyword">class</span> <span class="func">MultiHopRetriever</span>:
-    <span class="keyword">def</span> <span class="func">retrieve</span>(self, query, hops=2):
-        <span class="comment"># Hop 1: Direct semantic search</span>
-        results = search(query)
-        
-        <span class="comment"># Hop 2: Find callers/callees</span>
-        <span class="keyword">for</span> result <span class="keyword">in</span> results:
-            callers = cpg.get_callers(result.name)
-            callees = cpg.get_callees(result.name)
-            results.extend(callers + callees)
-        
-        <span class="keyword">return</span> deduplicate(results)
-
-<span class="comment"># Example:</span>
-<span class="comment"># Query: "How does login work?"</span>
-<span class="comment"># Hop 1: Find "login" function</span>
-<span class="comment"># Hop 2: Find what "login" calls</span>
-<span class="comment">#   → validate_password, create_session</span></pre>
-        </div>
-        <div class="card">
-            <h3>4. Re-ranking</h3>
-            <p>Cross-encoder re-ranks top-20 results to top-5 for precision.</p>
-            <pre><span class="comment"># analysis/reranking.py</span>
-<span class="keyword">class</span> <span class="func">CrossEncoderReranker</span>:
-    <span class="keyword">def</span> <span class="func">rerank</span>(self, query, results, top_k=5):
-        <span class="comment"># Cross-encoder scores (query, doc) pairs</span>
-        pairs = [(query, doc) <span class="keyword">for</span> doc <span class="keyword">in</span> results]
-        scores = cross_encoder.predict(pairs)
-        
-        <span class="comment"># Blend: 70% cross-encoder + 30% original</span>
-        <span class="keyword">for</span> result, score <span class="keyword">in</span> zip(results, scores):
-            result[<span class="string">"final_score"</span>] = 0.7 * score + 0.3 * result[<span class="string">"score"</span>]
-        
-        <span class="keyword">return</span> sorted(results)[:top_k]</pre>
-        </div>
-    </div>
-
-    <h3>Complete Retrieval Pipeline</h3>
-    <div class="card">
-        <pre><span class="comment"># Full pipeline: Query → Results</span>
-<span class="keyword">def</span> <span class="func">retrieve_context</span>(query, context):
-    <span class="comment"># 1. Query Expansion (3 queries)</span>
-    queries = query_expander.expand(query)
-    
-    <span class="comment"># 2. Multi-hop Retrieval (2 hops)</span>
-    all_results = []
-    <span class="keyword">for</span> q <span class="keyword">in</span> queries:
-        results = multi_hop.retrieve(q, hops=2)
-        all_results.extend(results)
-    
-    <span class="comment"># 3. Re-ranking (top-20 → top-5)</span>
-    reranked = reranker.rerank(query, all_results, top_k=5)
-    
-    <span class="keyword">return</span> reranked
-
-<span class="comment"># Interview answer:</span>
-<span class="comment"># "We use a 3-stage retrieval pipeline:</span>
-<span class="comment">#  1. Query expansion for better recall</span>
-<span class="comment">#  2. Multi-hop retrieval to follow call chains</span>
-<span class="comment">#  3. Cross-encoder re-ranking for precision"</span></pre>
-    </div>
-</section>
-
-<!-- ════════════════ 5. HOW IT WORKS ════════════════ -->
+<!-- ════════════════ 4. HOW IT WORKS ════════════════ -->
 <section id="flow">
-    <h2><span class="num">5</span> Internal Flow — Step by Step</h2>
+    <h2><span class="num">4</span> Internal Flow — Step by Step</h2>
     <p>Here's exactly what happens from the moment a user pastes a URL to seeing the result.</p>
 
     <!-- STEP 1 -->
@@ -967,7 +837,7 @@ response = cerebras.chat(
 
 <!-- STREAMING + MEMORY -->
 <section id="streaming">
-    <h2><span class="num">6</span> Streaming &amp; Conversation Memory</h2>
+    <h2><span class="num">5</span> Streaming &amp; Conversation Memory</h2>
 
     <div class="grid-2">
         <div class="card">
@@ -1036,7 +906,7 @@ conversation_history = []
 
 <!-- ════════════════ 4. BACKEND ════════════════ -->
 <section id="backend">
-    <h2><span class="num">7</span> Backend (Python / FastAPI)</h2>
+    <h2><span class="num">6</span> Backend (Python / FastAPI)</h2>
 
     <div class="grid-2">
         <div>
@@ -1114,14 +984,6 @@ conversation_history = []
                 <tr><td><code class="mono">analysis/chunker.py</code></td><td><span class="new">NEW</span> AST-aware code chunking (splits by function/class boundaries)</td></tr>
                 <tr><td><code class="mono">analysis/code_index.py</code></td><td><span class="new">NEW</span> Embeddings-based semantic search with sentence-transformers</td></tr>
                 <tr><td><code class="mono">analysis/query_builder.py</code></td><td><span class="new">NEW</span> 4-layer context builder for LLM queries</td></tr>
-                <tr><td><code class="mono">analysis/code_property_graph.py</code></td><td><span class="new">NEW</span> Code Property Graph (AST + Control Flow + Data Flow)</td></tr>
-                <tr><td><code class="mono">analysis/call_graph.py</code></td><td><span class="new">NEW</span> Function-level call graph with impact analysis</td></tr>
-                <tr><td><code class="mono">analysis/query_expansion.py</code></td><td><span class="new">NEW</span> Query expansion for better recall</td></tr>
-                <tr><td><code class="mono">analysis/multi_hop_retrieval.py</code></td><td><span class="new">NEW</span> Multi-hop retrieval following call chains</td></tr>
-                <tr><td><code class="mono">analysis/reranking.py</code></td><td><span class="new">NEW</span> Cross-encoder re-ranking for precision</td></tr>
-                <tr><td><code class="mono">tasks.py</code></td><td><span class="new">NEW</span> Celery worker for background job processing</td></tr>
-                <tr><td><code class="mono">vector_store.py</code></td><td><span class="new">NEW</span> Qdrant integration for persistent embeddings</td></tr>
-                <tr><td><code class="mono">hybrid_retriever.py</code></td><td><span class="new">NEW</span> Production hybrid retrieval (BM25 + Embeddings + RRF + Re-ranking)</td></tr>
             </tbody>
         </table>
     </div>
@@ -1129,7 +991,7 @@ conversation_history = []
 
 <!-- ════════════════ 5. FRONTEND ════════════════ -->
 <section id="frontend">
-    <h2><span class="num">8</span> Frontend (React 19 + Vite 5)</h2>
+    <h2><span class="num">7</span> Frontend (React 19 + Vite 5)</h2>
 
     <h3>Page Flow</h3>
     <div class="flow">
@@ -1193,7 +1055,7 @@ conversation_history = []
 
 <!-- ════════════════ 6. DATABASE ════════════════ -->
 <section id="database">
-    <h2><span class="num">9</span> Database (PostgreSQL — Optional)</h2>
+    <h2><span class="num">8</span> Database (PostgreSQL — Optional)</h2>
 
     <div class="card">
         <p>PostgreSQL is <strong>optional</strong>. If psycopg2 isn't installed or the database isn't configured, the system runs without caching — every request regenerates the analysis. This makes local development zero-config.</p>
@@ -1227,16 +1089,16 @@ conversation_history = []
 
 <!-- ════════════════ 7. LLM INTEGRATION ════════════════ -->
 <section id="llm">
-    <h2><span class="num">10</span> LLM Integration (Cerebras)</h2>
+    <h2><span class="num">9</span> LLM Integration (Cerebras)</h2>
 
     <div class="grid-2">
         <div class="card">
             <h4>For Analysis</h4>
-            <p><strong>One call, all 5 sections.</strong> The <code class="mono">hybrid_analyzer.py</code> builds a 4-layer context prompt containing file metadata, AST structure, dependencies, and code chunks. Cerebras generates all sections in one response. The output is parsed by <code class="mono">parse_sections()</code> which looks for <code class="mono">## Section N:</code> or <code class="mono">## Name</code> headers.</p>
+            <p><strong>One call, all 5 sections.</strong> The <code class="mono">hybrid_analyzer.py</code> builds a 4-layer context prompt containing file metadata, AST structure, dependencies, and relevant code chunks (via embeddings search). Cerebras generates all sections in one response. The output is parsed by <code class="mono">parse_sections()</code> which looks for <code class="mono">## Section N:</code> or <code class="mono">## Name</code> headers.</p>
         </div>
         <div class="card">
             <h4>For Chat</h4>
-            <p><strong>Smart layer selection.</strong> <code class="mono">chat_with_repo()</code> detects query type (summary vs specific) and builds optimal context. Summary queries get ~3K tokens (Layers 1-2 only). Specific queries get ~8K tokens (all 4 layers with hybrid search: BM25 + embeddings + RRF + re-ranking). Single LLM call per question with streaming support.</p>
+            <p><strong>Smart layer selection.</strong> <code class="mono">chat_with_repo()</code> detects query type (summary vs specific) and builds optimal context. Summary queries get ~3K tokens (Layers 1-2 only). Specific queries get ~8K tokens (all 4 layers with embeddings search for relevant code chunks). Single LLM call per question with streaming support.</p>
         </div>
     </div>
 
@@ -1264,7 +1126,7 @@ answer = response.choices[<span class="emerald">0</span>].message.content</pre>
 
 <!-- ════════════════ 8. ANTI-HALLUCINATION ════════════════ -->
 <section id="antihallucination">
-    <h2><span class="num">11</span> Anti-Hallucination System</h2>
+    <h2><span class="num">10</span> Anti-Hallucination System</h2>
 
     <div class="card-glow">
         <p>The LLM is given strict rules in the system prompt. Violations produce incorrect output, so these rules are critical:</p>
@@ -1295,7 +1157,7 @@ answer = response.choices[<span class="emerald">0</span>].message.content</pre>
 
 <!-- ════════════════ 9. CHAT SYSTEM ════════════════ -->
 <section id="chat">
-    <h2><span class="num">12</span> Chat System</h2>
+    <h2><span class="num">11</span> Chat System</h2>
 
     <h3>Before (Agentic Loop — 8+ LLM Calls)</h3>
     <div class="card" style="border-color: rgba(248,113,113,0.3);">
@@ -1355,7 +1217,7 @@ context = build_4layer_context(index, question, repo_url)
 <span class="comment"># - Which files import the queried module</span>
 
 <span class="comment"># Layer 4 (QUESTION-DRIVEN): Code Chunks</span>
-<span class="comment"># - Hybrid search: BM25 + Embeddings + RRF + Re-ranking</span>
+<span class="comment"># - Embeddings search: semantic similarity via sentence-transformers</span>
 
 <span class="comment"># 3. Single LLM call</span>
 response = cerebras.chat(
@@ -1366,7 +1228,7 @@ response = cerebras.chat(
 
 <!-- ════════════════ 10. TECH STACK ════════════════ -->
 <section id="techstack">
-    <h2><span class="num">13</span> Tech Stack</h2>
+    <h2><span class="num">12</span> Tech Stack</h2>
 
     <div class="tech-grid">
         <div class="tech-item"><div class="layer">Frontend</div><div class="name">React 19</div></div>
@@ -1377,12 +1239,8 @@ response = cerebras.chat(
         <div class="tech-item"><div class="layer">LLM</div><div class="name">Cerebras</div></div>
         <div class="tech-item"><div class="layer">Model</div><div class="name">zai-glm-4.7</div></div>
         <div class="tech-item"><div class="layer">Embeddings</div><div class="name">MiniLM-L6-v2</div></div>
-        <div class="tech-item"><div class="layer">Re-ranking</div><div class="name">Cross-Encoder</div></div>
-        <div class="tech-item"><div class="layer">Vector DB</div><div class="name">Qdrant</div></div>
-        <div class="tech-item"><div class="layer">Job Queue</div><div class="name">Celery + Redis</div></div>
         <div class="tech-item"><div class="layer">API</div><div class="name">Git Clone</div></div>
         <div class="tech-item"><div class="layer">Diagrams</div><div class="name">Mermaid.js</div></div>
-        <div class="tech-item"><div class="layer">Monitoring</div><div class="name">Prometheus + Grafana</div></div>
         <div class="tech-item"><div class="layer">Fonts</div><div class="name">Inter + JetBrains Mono</div></div>
     </div>
 
@@ -1395,8 +1253,7 @@ response = cerebras.chat(
             <tr><td><strong>FastAPI</strong></td><td>Async Python, auto-docs, Pydantic validation</td><td>Flask — no async, no auto-docs</td></tr>
             <tr><td><strong>Cerebras</strong></td><td>Free tier, fast inference, tool-use model</td><td>OpenAI — costs money, rate limits</td></tr>
             <tr><td><strong>PostgreSQL</strong></td><td>Reliable, SQL, UPSERT support</td><td>SQLite — no UPSERT, less robust</td></tr>
-            <tr><td><strong>Embeddings (sentence-transformers)</strong></td><td>Semantic search, understands meaning, hybrid with BM25 via RRF</td><td>FAISS — heavier, requires separate vector DB</td></tr>
-            <tr><td><strong>BM25</strong></td><td>Excellent for code (exact matches), ~5ms queries</td><td>Embeddings — slower, requires API</td></tr>
+            <tr><td><strong>Embeddings (sentence-transformers)</strong></td><td>Semantic search, understands meaning</td><td>FAISS — heavier, requires separate vector DB</td></tr>
             <tr><td><strong>Git Clone</strong></td><td>Complete file access, no rate limits, no truncation</td><td>GitHub API — depth limits, file limits, rate limits</td></tr>
             <tr><td><strong>Mermaid.js</strong></td><td>Diagrams as code, dark theme, zoom/pan support</td><td>D2, PlantUML — less JS integration</td></tr>
         </tbody>
@@ -1405,7 +1262,7 @@ response = cerebras.chat(
 
 <!-- ════════════════ 11. COMPARISON ════════════════ -->
 <section id="comparison">
-    <h2><span class="num">14</span> CodeLens vs DeepWiki</h2>
+    <h2><span class="num">13</span> CodeLens vs DeepWiki</h2>
 
     <table>
         <thead><tr><th>Feature</th><th>DeepWiki</th><th>CodeLens</th><th>Winner</th></tr></thead>
@@ -1429,7 +1286,7 @@ response = cerebras.chat(
 
 <!-- ════════════════ 12. FILE STRUCTURE ════════════════ -->
 <section id="filestructure">
-    <h2><span class="num">15</span> File Structure</h2>
+    <h2><span class="num">14</span> File Structure</h2>
 
     <div class="grid-2">
         <div>
@@ -1455,20 +1312,12 @@ response = cerebras.chat(
 │   ├── <span class="new">chunker.py</span>            <span class="comment"># AST-aware code chunking</span>
 │   ├── <span class="new">code_index.py</span>         <span class="comment"># Embeddings semantic search (sentence-transformers)</span>
 │   ├── <span class="new">query_builder.py</span>      <span class="comment"># 4-layer context builder</span>
-│   ├── <span class="new">code_property_graph.py</span> <span class="comment"># Code Property Graph (AST + CFG + DFG)</span>
-│   ├── <span class="new">call_graph.py</span>         <span class="comment"># Function call graph with impact analysis</span>
-│   ├── <span class="new">query_expansion.py</span>    <span class="comment"># Query expansion for better recall</span>
-│   ├── <span class="new">multi_hop_retrieval.py</span> <span class="comment"># Multi-hop retrieval following call chains</span>
-│   └── <span class="new">reranking.py</span>          <span class="comment"># Cross-encoder re-ranking for precision</span>
-├── <span class="new">tasks.py</span>                    <span class="comment"># Celery worker for background jobs</span>
-├── <span class="new">vector_store.py</span>             <span class="comment"># Qdrant vector database integration</span>
-├── <span class="new">hybrid_retriever.py</span>         <span class="comment"># Production hybrid retrieval</span>
 ├── <span class="folder">monitoring/</span>                 <span class="comment"># Prometheus + Grafana</span>
 │   ├── <span class="file">prometheus.yml</span>         <span class="comment"># Prometheus config</span>
 │   └── <span class="folder">grafana/</span>
 │       ├── <span class="folder">dashboards/</span>        <span class="comment"># Pre-built dashboards</span>
 │       └── <span class="folder">datasources/</span>       <span class="comment"># Prometheus datasource</span>
-├── <span class="file">docker-compose.yml</span>          <span class="comment"># All services (API, Worker, Redis, Qdrant, PostgreSQL)</span>
+├── <span class="file">docker-compose.yml</span>          <span class="comment"># All services</span>
 ├── <span class="folder">agent/</span>                    <span class="comment"># Legacy agentic loop (unused)</span>
 ├── <span class="folder">tests/</span>
 ├── <span class="file">.env</span>                      <span class="comment"># API keys</span>
@@ -1512,7 +1361,7 @@ response = cerebras.chat(
 
 <!-- ════════════════ DOCKER ════════════════ -->
 <section id="docker">
-    <h2><span class="num">16</span> Docker &amp; Deployment</h2>
+    <h2><span class="num">15</span> Docker &amp; Deployment</h2>
     <p>Production-ready setup with Docker Compose. One command to start all services.</p>
 
     <div class="card-glow">
@@ -1521,12 +1370,6 @@ response = cerebras.chat(
             <div class="arrow">&darr;</div>
             <div style="display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center;">
                 <div class="arch-box" style="background: linear-gradient(135deg, #10b981, #34d399); color: white;">FastAPI API<small>Port 8000</small></div>
-                <div class="arch-box" style="background: linear-gradient(135deg, #8b5cf6, #a78bfa); color: white;">Celery Worker<small>Background jobs</small></div>
-                <div class="arch-box" style="background: linear-gradient(135deg, #ef4444, #f87171); color: white;">Redis<small>Queue + Cache</small></div>
-            </div>
-            <div class="arrow">&darr;</div>
-            <div style="display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center;">
-                <div class="arch-box" style="background: linear-gradient(135deg, #f59e0b, #fbbf24); color: white;">Qdrant<small>Vector DB</small></div>
                 <div class="arch-box" style="background: linear-gradient(135deg, #64748b, #94a3b8); color: white;">PostgreSQL<small>Cache (optional)</small></div>
                 <div class="arch-box" style="background: linear-gradient(135deg, #ec4899, #f472b6); color: white;">React Frontend<small>Port 5173</small></div>
             </div>
@@ -1538,9 +1381,6 @@ response = cerebras.chat(
         <thead><tr><th>Service</th><th>Image</th><th>Port</th><th>Purpose</th></tr></thead>
         <tbody>
             <tr><td><code class="mono">api</code></td><td>FastAPI</td><td>8000</td><td>REST API endpoints</td></tr>
-            <tr><td><code class="mono">worker</code></td><td>Celery</td><td>-</td><td>Background job processing</td></tr>
-            <tr><td><code class="mono">redis</code></td><td>Redis 7</td><td>6379</td><td>Message broker + cache</td></tr>
-            <tr><td><code class="mono">qdrant</code></td><td>Qdrant</td><td>6333</td><td>Vector database</td></tr>
             <tr><td><code class="mono">postgres</code></td><td>PostgreSQL 15</td><td>5432</td><td>Analysis cache (optional)</td></tr>
             <tr><td><code class="mono">frontend</code></td><td>React + Vite</td><td>5173</td><td>User interface</td></tr>
         </tbody>
@@ -1567,7 +1407,7 @@ docker compose up -d
 
 <!-- ════════════════ MONITORING ════════════════ -->
 <section id="monitoring">
-    <h2><span class="num">17</span> Observability &amp; Monitoring</h2>
+    <h2><span class="num">16</span> Observability &amp; Monitoring</h2>
     <p>Prometheus + Grafana for metrics, dashboards, and alerting.</p>
 
     <div class="grid-2">
@@ -1576,9 +1416,6 @@ docker compose up -d
             <p>Collects metrics from all services:</p>
             <ul style="list-style: none; padding: 0;">
                 <li style="padding: 0.3rem 0; color: var(--text-secondary);">✓ API request rate &amp; latency</li>
-                <li style="padding: 0.3rem 0; color: var(--text-secondary);">✓ Celery task success/failure rate</li>
-                <li style="padding: 0.3rem 0; color: var(--text-secondary);">✓ Redis memory &amp; connections</li>
-                <li style="padding: 0.3rem 0; color: var(--text-secondary);">✓ Qdrant vector count</li>
                 <li style="padding: 0.3rem 0; color: var(--text-secondary);">✓ LLM response time</li>
             </ul>
         </div>
@@ -1587,7 +1424,6 @@ docker compose up -d
             <p>Pre-configured dashboards:</p>
             <ul style="list-style: none; padding: 0;">
                 <li style="padding: 0.3rem 0; color: var(--text-secondary);">✓ Real-time API metrics</li>
-                <li style="padding: 0.3rem 0; color: var(--text-secondary);">✓ Worker queue visualization</li>
                 <li style="padding: 0.3rem 0; color: var(--text-secondary);">✓ Error rate tracking</li>
                 <li style="padding: 0.3rem 0; color: var(--text-secondary);">✓ Performance trends</li>
             </ul>
@@ -1601,18 +1437,10 @@ docker compose up -d
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
 │  FastAPI ──→ /metrics ──→ Prometheus ──→ Grafana            │
-│     │              │              │              │            │
-│     │              │              │              │            │
-│  Celery ──→ Flower ──→ Metrics ──→ Dashboard    │            │
-│     │                                          │            │
-│  Redis ──→ Stats ──→ Metrics ──→ Dashboard     │            │
 │                                                              │
 │  Metrics collected:                                         │
 │  • http_requests_total (counter)                            │
 │  • http_request_duration_seconds (histogram)                │
-│  • celery_tasks_total (counter)                             │
-│  • celery_queue_length (gauge)                              │
-│  • redis_memory_used_bytes (gauge)                          │
 │  • llm_response_duration_seconds (histogram)                │
 └─────────────────────────────────────────────────────────────┘</pre>
     </div>
@@ -1620,7 +1448,7 @@ docker compose up -d
 
 <!-- ════════════════ QUICK START ════════════════ -->
 <section id="quickstart">
-    <h2><span class="num">18</span> Quick Start</h2>
+    <h2><span class="num">17</span> Quick Start</h2>
 
     <div class="grid-2">
         <div>
@@ -1669,7 +1497,7 @@ npm run build</pre>
 
 <!-- ════════════════ INTERVIEW Q&A ════════════════ -->
 <section id="interview">
-    <h2><span class="num">19</span> Interview Questions &amp; Answers</h2>
+    <h2><span class="num">18</span> Interview Questions &amp; Answers</h2>
     <p>Every question an interviewer could ask about this project, from architecture to implementation details.</p>
 
     <!-- ── ARCHITECTURE ── -->
@@ -1677,17 +1505,17 @@ npm run build</pre>
 
     <div class="card">
         <h4>Q1: Walk me through the high-level architecture of this project.</h4>
-        <p>CodeLens is a three-tier system: <strong>React/Vite SPA</strong> (frontend) &rarr; <strong>FastAPI backend</strong> (orchestration) &rarr; <strong>External services</strong> (Git Clone, Cerebras LLM, SQLite FTS5, PostgreSQL). The frontend sends a GitHub URL to the backend. The backend shallow-clones the repository, reads all files locally, builds a 4-layer hierarchical index (file metadata, AST structure, dependency graph, code chunks), generates 5 analysis sections with a single LLM call, caches the result in PostgreSQL, and returns it. For chat, the 4-layer index provides efficient context: Layers 1-2 (always sent) give full codebase awareness (~3K tokens), while Layers 3-4 (BM25 search) retrieve only relevant code (~5K tokens). The frontend renders it as a wiki page with zoomable Mermaid diagrams and markdown content.</p>
+        <p>CodeLens is a three-tier system: <strong>React/Vite SPA</strong> (frontend) &rarr; <strong>FastAPI backend</strong> (orchestration) &rarr; <strong>External services</strong> (Git Clone, Cerebras LLM, PostgreSQL). The frontend sends a GitHub URL to the backend. The backend shallow-clones the repository, reads all files locally, builds a 4-layer hierarchical index (file metadata, AST structure, dependency graph, code chunks), generates 5 analysis sections with a single LLM call, caches the result in PostgreSQL, and returns it. For chat, the 4-layer index provides efficient context: Layers 1-2 (always sent) give full codebase awareness (~3K tokens), while Layers 3-4 (embeddings search) retrieve only relevant code (~5K tokens). The frontend renders it as a wiki page with zoomable Mermaid diagrams and markdown content.</p>
     </div>
 
     <div class="card">
-        <h4>Q2: Why did you choose a hybrid approach with 4-layer RAG?</h4>
-        <p>The first version used an agentic loop — the LLM would decide which MCP tool to call, execute it, get the result, and loop (8+ sequential LLM calls, 2-3 minutes per analysis). I replaced it with a hybrid approach: one LLM call generates all 5 sections at once (~15 seconds). For chat, I added 4-layer hierarchical RAG with smart query detection: summary queries use only Layers 1-2 (~3K tokens, 94% savings), while specific queries use all 4 layers (~8K tokens, 84% savings) with BM25 for code retrieval. <strong>Why:</strong> (1) predictable latency, (2) massive token savings, (3) full codebase awareness for summaries, (4) detailed code for specifics, (5) works with Cerebras free tier, (6) simpler codebase.</p>
+        <h4>Q2: Why did you choose a 4-layer RAG approach?</h4>
+        <p>The first version used an agentic loop — the LLM would decide which MCP tool to call, execute it, get the result, and loop (8+ sequential LLM calls, 2-3 minutes per analysis). I replaced it with a hybrid approach: one LLM call generates all 5 sections at once (~15 seconds). For chat, I added 4-layer hierarchical RAG with smart query detection: summary queries use only Layers 1-2 (~3K tokens, 94% savings), while specific queries use all 4 layers (~8K tokens, 84% savings) with embeddings search for code retrieval. <strong>Why:</strong> (1) predictable latency, (2) massive token savings, (3) full codebase awareness for summaries, (4) detailed code for specifics, (5) works with Cerebras free tier, (6) simpler codebase.</p>
     </div>
 
     <div class="card">
         <h4>Q3: What are the trade-offs of the 4-layer approach?</h4>
-        <p><strong>Pros:</strong> Fast (~8K tokens per query), cheap, predictable, full codebase awareness via Layers 1-2, relevant details via BM25 in Layers 3-4. <strong>Cons:</strong> (1) The LLM can't dynamically explore the codebase — it only sees what the index contains, so it might miss important context in very large repos. (2) BM25 relies on exact keyword matching — conceptual queries like "how does authentication work" might miss relevant code if function names don't match. (3) Index build time adds ~1-2 seconds per repo. <strong>Mitigation:</strong> Layers 1-2 provide complete structure awareness, and the AST parser extracts function signatures that often contain descriptive names.</p>
+        <p><strong>Pros:</strong> Fast (~8K tokens per query), cheap, predictable, full codebase awareness via Layers 1-2, relevant details via embeddings search in Layers 3-4. <strong>Cons:</strong> (1) The LLM can't dynamically explore the codebase — it only sees what the index contains, so it might miss important context in very large repos. (2) Embeddings search relies on semantic similarity — conceptual queries might miss relevant code if function names are unrelated. (3) Index build time adds ~1-2 seconds per repo. <strong>Mitigation:</strong> Layers 1-2 provide complete structure awareness, and the AST parser extracts function signatures that often contain descriptive names.</p>
     </div>
 
     <div class="card">
@@ -1697,7 +1525,7 @@ npm run build</pre>
 
     <div class="card">
         <h4>Q5: What improvements have been made since the initial version?</h4>
-        <p>(1) <strong>Streaming:</strong> Implemented SSE and WebSocket streaming for real-time token-by-token output. (2) <strong>Hybrid search:</strong> Added embeddings (sentence-transformers) alongside BM25 with Reciprocal Rank Fusion. (3) <strong>Cross-encoder re-ranking:</strong> ms-marco-MiniLM-L-6-v2 for precision after initial retrieval. (4) <strong>Background jobs:</strong> Celery + Redis for non-blocking analysis. (5) <strong>Vector DB:</strong> Qdrant for persistent embedding storage with filtering. (6) <strong>Monitoring:</strong> Prometheus + Grafana for metrics and dashboards. (7) <strong>Advanced RAG:</strong> Query expansion, multi-hop retrieval, Code Property Graph, call graph analysis. (8) <strong>Docker:</strong> Full Docker Compose setup with 8 services. (9) <strong>Config files in index:</strong> .gitignore, package.json, etc. now indexed for complete context.</p>
+        <p>(1) <strong>Streaming:</strong> Implemented SSE and WebSocket streaming for real-time token-by-token output. (2) <strong>4-layer RAG:</strong> Smart query detection (summary vs specific) with optimal layer selection. (3) <strong>Conversation memory:</strong> Last 4 exchanges for follow-up context. (4) <strong>Config files in index:</strong> .gitignore, package.json, etc. now indexed for complete context. (5) <strong>Shallow git clone:</strong> Replaced GitHub REST API with local filesystem reads for complete file access.</p>
     </div>
 
     <!-- ── BACKEND ── -->
@@ -1743,7 +1571,7 @@ npm run build</pre>
 
     <div class="card">
         <h4>Q13: How do you handle context window limitations?</h4>
-        <p>The 4-layer hierarchical approach with smart query detection solves this: (1) <strong>Summary queries:</strong> Only Layers 1-2 (~3K tokens) — file metadata + AST structure provide full codebase awareness without sending actual code, (2) <strong>Specific queries:</strong> All 4 layers (~8K tokens) — includes dependencies + code chunks retrieved via BM25, (3) <strong>Smart detection:</strong> The system automatically detects if a question needs full code context or just structure overview. (4) <strong>94% savings</strong> for summary queries, 84% for specific queries.</p>
+        <p>The 4-layer hierarchical approach with smart query detection solves this: (1) <strong>Summary queries:</strong> Only Layers 1-2 (~3K tokens) — file metadata + AST structure provide full codebase awareness without sending actual code, (2) <strong>Specific queries:</strong> All 4 layers (~8K tokens) — includes dependencies + code chunks retrieved via embeddings search, (3) <strong>Smart detection:</strong> The system automatically detects if a question needs full code context or just structure overview. (4) <strong>94% savings</strong> for summary queries, 84% for specific queries.</p>
     </div>
 
     <div class="card">
@@ -1840,7 +1668,7 @@ npm run build</pre>
 
     <div class="card">
         <h4>Q30: How would you handle 100 concurrent users analyzing different repos?</h4>
-        <p><strong>Current bottleneck:</strong> Git clone + LLM inference. Each analysis takes ~15 sec (clone + LLM). <strong>Solutions:</strong> (1) Request queuing with rate limiting, (2) Aggressive DB caching (most repos will be repeat requests), (3) Horizontal scaling of FastAPI instances, (4) Background job queue (Celery/RQ) for analysis generation, (5) Shared file cache across instances. Since we use git clone instead of GitHub API, there are no API rate limits to worry about.</p>
+        <p><strong>Current bottleneck:</strong> Git clone + LLM inference. Each analysis takes ~15 sec (clone + LLM). <strong>Solutions:</strong> (1) Request queuing with rate limiting, (2) Aggressive DB caching (most repos will be repeat requests), (3) Horizontal scaling of FastAPI instances, (4) Shared file cache across instances. Since we use git clone instead of GitHub API, there are no API rate limits to worry about.</p>
     </div>
 
     <!-- ── TESTING ── -->
@@ -1865,8 +1693,8 @@ npm run build</pre>
     </div>
 
     <div class="card">
-        <h4>Q34: How do you handle search — BM25 vs embeddings?</h4>
-        <p><strong>We use both.</strong> The hybrid retriever combines: (1) <strong>BM25</strong> for exact keyword matching (fast, ~5ms), (2) <strong>Embeddings</strong> (sentence-transformers all-MiniLM-L6-v2) for semantic understanding (~200ms), (3) <strong>Reciprocal Rank Fusion</strong> to merge results from both, (4) <strong>Cross-encoder re-ranking</strong> (ms-marco-MiniLM-L-6-v2) for precision — top-20 → top-5. <strong>Why both:</strong> BM25 excels at exact matches ("auth.py", "login function"), while embeddings catch semantic relationships ("user sessions" matches "auth logic"). The fusion gives the best of both worlds.</p>
+        <h4>Q34: How do you handle search — embeddings?</h4>
+        <p><strong>Embeddings-based semantic search.</strong> We use sentence-transformers (all-MiniLM-L6-v2) for semantic similarity. The model encodes code chunks and queries into 384-dimensional vectors, then computes cosine similarity to find the most relevant chunks. <strong>Why embeddings:</strong> They understand semantic meaning — "user sessions" matches "auth logic" without exact keyword overlap. The search runs in-memory with ~200ms latency per query. <strong>Layer selection:</strong> Summary queries use only Layers 1-2 (~3K tokens), while specific queries add Layers 3-4 with embeddings search (~8K tokens).</p>
     </div>
 
     <div class="card">
@@ -1894,7 +1722,7 @@ npm run build</pre>
 
     <div class="card">
         <h4>Q39: What monitoring/observability is in place?</h4>
-        <p><strong>Prometheus + Grafana</strong> are fully integrated: (1) <strong>Metrics:</strong> HTTP request rate, latency histograms, Celery task success/failure, Redis memory, Qdrant vector count, LLM response time. (2) <strong>Grafana dashboards:</strong> Pre-built dashboards for real-time API metrics, worker queue visualization, error rate tracking. (3) <strong>Docker Compose:</strong> Prometheus and Grafana run as services alongside the API. (4) <strong>Health checks:</strong> <code class="mono">/api/health</code> endpoint verifies system status. <strong>Future additions:</strong> Structured logging (replace print statements), OpenTelemetry distributed tracing, Sentry error tracking.</p>
+        <p><strong>Prometheus + Grafana</strong> are configured: (1) <strong>Metrics:</strong> HTTP request rate, latency histograms, LLM response time. (2) <strong>Grafana dashboards:</strong> Pre-built dashboards for real-time API metrics, error rate tracking. (3) <strong>Docker Compose:</strong> Prometheus and Grafana can run as services alongside the API. (4) <strong>Health checks:</strong> <code class="mono">/api/health</code> endpoint verifies system status. <strong>Future additions:</strong> Structured logging (replace print statements), OpenTelemetry distributed tracing, Sentry error tracking.</p>
     </div>
 
     <!-- ── CODE QUALITY ── -->
@@ -1902,7 +1730,7 @@ npm run build</pre>
 
     <div class="card">
         <h4>Q40: What design patterns did you use?</h4>
-        <p>(1) <strong>Repository pattern:</strong> <code class="mono">github_client/github.py</code> abstracts GitHub API calls behind a clean interface. (2) <strong>Strategy pattern:</strong> <code class="mono">db_utils.py</code> gracefully degrades — the same code works with or without PostgreSQL. (3) <strong>Facade pattern:</strong> <code class="mono">main.py</code> orchestrates cloner, analyzer, and DB behind a single <code class="mono">generate_repo_analysis()</code> function. (4) <strong>Cache-aside pattern:</strong> Check cache first, on miss fetch + store. (5) <strong>Builder pattern:</strong> <code class="mono">build_hybrid_prompt()</code> constructs a complex prompt from multiple data sources. (6) <strong>Layered architecture:</strong> 4-layer RAG with always-on layers (1-2) and question-driven layers (3-4). (7) <strong>Index pattern:</strong> SQLite FTS5 for BM25 search over code chunks.</p>
+        <p>(1) <strong>Repository pattern:</strong> <code class="mono">github_client/github.py</code> abstracts GitHub API calls behind a clean interface. (2) <strong>Strategy pattern:</strong> <code class="mono">db_utils.py</code> gracefully degrades — the same code works with or without PostgreSQL. (3) <strong>Facade pattern:</strong> <code class="mono">main.py</code> orchestrates cloner, analyzer, and DB behind a single <code class="mono">generate_repo_analysis()</code> function. (4) <strong>Cache-aside pattern:</strong> Check cache first, on miss fetch + store. (5) <strong>Builder pattern:</strong> <code class="mono">build_hybrid_prompt()</code> constructs a complex prompt from multiple data sources. (6) <strong>Layered architecture:</strong> 4-layer RAG with always-on layers (1-2) and question-driven layers (3-4).</p>
     </div>
 
     <div class="card">
@@ -1922,12 +1750,12 @@ npm run build</pre>
 
     <div class="card">
         <h4>Q44: What's the most complex bug you fixed in this project?</h4>
-        <p><strong>The "0 source files" bug:</strong> The initial <code class="mono">repo_fetcher.py</code> used GitHub API with depth limit 3 and 15 files per directory. Repos like Flask have source code deep in <code class="mono">src/flask/*.py</code> subdirectories. The LLM returned "No source files found" because the prompt had empty source data. Fix: switched to shallow git clone approach — <code class="mono">repo_cloner.py</code> clones the repo and reads all files from local filesystem with no depth or count limits. <strong>The "context rot" bug:</strong> The old approach sent all files to the LLM (50K+ tokens), causing the model to lose focus and produce lower quality output. Fix: implemented 4-layer hierarchical RAG — Layers 1-2 provide full structure awareness (~3K tokens), Layers 3-4 retrieve only relevant code via BM25 (~5K tokens). <strong>The "code blocks skipped" bug:</strong> <code class="mono">MarkdownRenderer</code> was processing inline code (<code class="mono">`code`</code>) before code blocks (<code class="mono">```code```</code>), consuming backticks. Fix: parse code blocks first, then inline code on remaining text.</p>
+        <p><strong>The "0 source files" bug:</strong> The initial <code class="mono">repo_fetcher.py</code> used GitHub API with depth limit 3 and 15 files per directory. Repos like Flask have source code deep in <code class="mono">src/flask/*.py</code> subdirectories. The LLM returned "No source files found" because the prompt had empty source data. Fix: switched to shallow git clone approach — <code class="mono">repo_cloner.py</code> clones the repo and reads all files from local filesystem with no depth or count limits. <strong>The "context rot" bug:</strong> The old approach sent all files to the LLM (50K+ tokens), causing the model to lose focus and produce lower quality output. Fix: implemented 4-layer hierarchical RAG — Layers 1-2 provide full structure awareness (~3K tokens), Layers 3-4 retrieve only relevant code via embeddings search (~5K tokens). <strong>The "code blocks skipped" bug:</strong> <code class="mono">MarkdownRenderer</code> was processing inline code (<code class="mono">`code`</code>) before code blocks (<code class="mono">```code```</code>), consuming backticks. Fix: parse code blocks first, then inline code on remaining text.</p>
     </div>
 
     <div class="card">
         <h4>Q45: What has been implemented since the initial version?</h4>
-        <p>Many improvements from the original roadmap are now complete: (1) <strong>Streaming</strong> — SSE and WebSocket with token-by-token output. (2) <strong>4-layer RAG from day one</strong> — replaced the "dump everything" approach. (3) <strong>Task queue</strong> — Celery + Redis for background analysis. (4) <strong>Docker</strong> — full Docker Compose with 8 services. (5) <strong>Git clone from day one</strong> — replaced GitHub API approach. (6) <strong>Monitoring</strong> — Prometheus + Grafana. (7) <strong>Hybrid search</strong> — BM25 + Embeddings + RRF + Re-ranking. (8) <strong>Advanced RAG</strong> — query expansion, multi-hop, CPG, call graph. (9) <strong>Vector DB</strong> — Qdrant for persistent embeddings. (10) <strong>Conversation memory</strong> — last 4 exchanges for follow-up context.</p>
+        <p>Many improvements from the original roadmap are now complete: (1) <strong>Streaming</strong> — SSE and WebSocket with token-by-token output. (2) <strong>4-layer RAG from day one</strong> — replaced the "dump everything" approach. (3) <strong>Git clone from day one</strong> — replaced GitHub API approach. (4) <strong>Conversation memory</strong> — last 4 exchanges for follow-up context. (5) <strong>Config files in index</strong> — .gitignore, package.json, etc. now indexed.</p>
     </div>
 </section>
 
@@ -1935,7 +1763,7 @@ npm run build</pre>
 
 <!-- ════════════════ FOOTER ════════════════ -->
 <footer>
-    <p><strong>CodeLens</strong> &mdash; 4-Layer RAG | Code Property Graph | Multi-hop Retrieval | Hybrid Search | Docker | Prometheus + Grafana | React + Vite | FastAPI | Celery + Redis | Qdrant</p>
+    <p><strong>CodeLens</strong> &mdash; 4-Layer RAG | Embeddings Search | Streaming | Conversation Memory | React + Vite | FastAPI</p>
     <p style="margin-top: 0.5rem;">Paste a GitHub URL. Get instant architecture docs.</p>
 </footer>
 
