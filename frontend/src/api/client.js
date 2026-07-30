@@ -2,6 +2,55 @@ const API_BASE = import.meta.env.VITE_API_URL || 'https://codelens-g9ft.onrender
 
 const analysisCache = new Map();
 
+// localStorage helpers for recent repos
+const RECENT_KEY = 'codelens_recent_repos';
+const MAX_RECENT = 20;
+
+function getRecentRepos() {
+  try {
+    const data = localStorage.getItem(RECENT_KEY);
+    return data ? JSON.parse(data) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentRepo(repoUrl, data) {
+  try {
+    const recent = getRecentRepos();
+    const repoName = repoUrl.replace('https://github.com/', '');
+    const description = data?.purpose_scope?.split('\n')[0]?.slice(0, 120) || '';
+    
+    // Remove if already exists
+    const filtered = recent.filter(r => r.url !== repoUrl);
+    
+    // Add to front
+    filtered.unshift({
+      url: repoUrl,
+      name: repoName,
+      description,
+      timestamp: Date.now(),
+      commitHash: data?._commit_hash || '',
+    });
+    
+    // Keep only last 20
+    localStorage.setItem(RECENT_KEY, JSON.stringify(filtered.slice(0, MAX_RECENT)));
+  } catch (e) {
+    console.warn('[CodeLens] Failed to save recent repo:', e);
+  }
+}
+
+export function getRecentReposList() {
+  return getRecentRepos();
+}
+
+export function removeRecentRepo(repoUrl) {
+  try {
+    const recent = getRecentRepos();
+    localStorage.setItem(RECENT_KEY, JSON.stringify(recent.filter(r => r.url !== repoUrl)));
+  } catch {}
+}
+
 export async function analyzeRepository(repoUrl, forceRefresh = false) {
   const cacheKey = `${repoUrl}:${forceRefresh}`;
   if (!forceRefresh && analysisCache.has(cacheKey)) {
@@ -20,6 +69,16 @@ export async function analyzeRepository(repoUrl, forceRefresh = false) {
 
   const data = await response.json();
   analysisCache.set(cacheKey, data);
+  
+  // Save to recent repos
+  saveRecentRepo(repoUrl, data);
+  
+  console.log('[CodeLens] Analysis response:', {
+    repoUrl,
+    sections: Object.keys(data).filter(k => !k.startsWith('_')),
+    relevantFiles: data._relevant_files,
+    commitHash: data._commit_hash,
+  });
   return data;
 }
 

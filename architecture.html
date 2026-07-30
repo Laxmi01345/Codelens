@@ -346,7 +346,7 @@
     <a href="#streaming">Streaming</a>
     <a href="#backend">Backend</a>
     <a href="#frontend">Frontend</a>
-    <a href="#docker">Docker</a>
+    <a href="#deployment">Deployment</a>
     <a href="#monitoring">Monitoring</a>
     <a href="#llm">LLM</a>
     <a href="#chat">Chat</a>
@@ -1279,7 +1279,12 @@ response = cerebras.chat(
             <tr><td><strong>UI Polish</strong></td><td class="win">Production-ready, refined</td><td>Functional, clean dark theme</td><td class="win">DeepWiki</td></tr>
             <tr><td><strong>Community</strong></td><td class="win">30k+ stars, active</td><td>New project</td><td class="win">DeepWiki</td></tr>
             <tr><td><strong>Chat</strong></td><td>Agentic (slow)</td><td class="win">Smart 4-Layer RAG (3K-8K tokens)</td><td class="win">CodeLens</td></tr>
-            <tr><td><strong>DB Caching</strong></td><td>Required</td><td class="win">Optional (graceful fallback)</td><td class="win">CodeLens</td></tr>
+            <tr><td><strong>DB Caching</strong></td><td>Required</td><td class="win">Optional (PostgreSQL + JSON fallback)</td><td class="win">CodeLens</td></tr>
+            <tr><td><strong>Per-Section Files</strong></td><td>Generic</td><td class="win">Topic-based assignment (15 files/section)</td><td class="win">CodeLens</td></tr>
+            <tr><td><strong>File Tree</strong></td><td>Text-based</td><td class="win">Real git clone + collapsible viewer</td><td class="win">CodeLens</td></tr>
+            <tr><td><strong>Offline Cache</strong></td><td>None</td><td class="win">JSON file fallback (~/.codelens/cache/)</td><td class="win">CodeLens</td></tr>
+            <tr><td><strong>Recent Repos</strong></td><td>None</td><td class="win">localStorage with timestamps</td><td class="win">CodeLens</td></tr>
+            <tr><td><strong>Commit Tracking</strong></td><td>None</td><td class="win">Pinned to specific git commit</td><td class="win">CodeLens</td></tr>
         </tbody>
     </table>
 </section>
@@ -1295,29 +1300,26 @@ response = cerebras.chat(
 <span class="folder">codelens/backend/</span>
 ├── <span class="hl">api.py</span>                    <span class="comment"># FastAPI app + endpoints</span>
 ├── <span class="hl">main.py</span>                   <span class="comment"># Orchestrator</span>
-├── <span class="hl">hybrid_analyzer.py</span>        <span class="comment"># Single LLM call analysis</span>
+├── <span class="hl">hybrid_analyzer.py</span>        <span class="comment"># LLM call + section parsing + source citations</span>
 ├── <span class="hl">hybrid_prompts.py</span>         <span class="comment"># Anti-hallucination prompts</span>
-├── <span class="hl">repo_cloner.py</span>            <span class="comment"># Shallow git clone + file reads</span>
+├── <span class="hl">repo_cloner.py</span>            <span class="comment"># Shallow git clone + local reads + commit hash</span>
 ├── <span class="hl">repo_fetcher.py</span>           <span class="comment"># Clone orchestrator + AST parsing</span>
+├── <span class="hl">db_utils.py</span>               <span class="comment"># PostgreSQL + JSON file fallback</span>
 ├── <span class="file">llm_utils.py</span>              <span class="comment"># Cerebras client</span>
-├── <span class="file">db_utils.py</span>               <span class="comment"># PostgreSQL (optional)</span>
+├── <span class="file">hybrid_retriever.py</span>       <span class="comment"># Hybrid retrieval (unused)</span>
+├── <span class="file">vector_store.py</span>           <span class="comment"># Vector store (unused)</span>
+├── <span class="file">tasks.py</span>                  <span class="comment"># Celery tasks (unused)</span>
 ├── <span class="folder">github_client/</span>
 │   ├── <span class="hl">github.py</span>             <span class="comment"># GitHub API (validate, issues)</span>
-│   └── <span class="file">client.py</span>             <span class="comment"># Client manager</span>
+│   └── <span class="hl">client.py</span>             <span class="comment"># Client manager</span>
 ├── <span class="folder">analysis/</span>
 │   ├── <span class="hl">pipeline.py</span>           <span class="comment"># Static analysis orchestrator</span>
-│   ├── <span class="hl">ast_parser.py</span>         <span class="comment"># Regex AST parser (5 langs)</span>
+│   ├── <span class="hl">ast_parser.py</span>         <span class="comment"># Regex AST parser (6 languages)</span>
 │   ├── <span class="hl">graph_builder.py</span>      <span class="comment"># Dependency graph builder</span>
 │   ├── <span class="file">file_cache.py</span>         <span class="comment"># SHA-256 file cache</span>
 │   ├── <span class="new">chunker.py</span>            <span class="comment"># AST-aware code chunking</span>
 │   ├── <span class="new">code_index.py</span>         <span class="comment"># Embeddings semantic search (sentence-transformers)</span>
-│   ├── <span class="new">query_builder.py</span>      <span class="comment"># 4-layer context builder</span>
-├── <span class="folder">monitoring/</span>                 <span class="comment"># Prometheus + Grafana</span>
-│   ├── <span class="file">prometheus.yml</span>         <span class="comment"># Prometheus config</span>
-│   └── <span class="folder">grafana/</span>
-│       ├── <span class="folder">dashboards/</span>        <span class="comment"># Pre-built dashboards</span>
-│       └── <span class="folder">datasources/</span>       <span class="comment"># Prometheus datasource</span>
-├── <span class="file">docker-compose.yml</span>          <span class="comment"># All services</span>
+│   └── <span class="new">query_builder.py</span>      <span class="comment"># 4-layer context builder</span>
 ├── <span class="folder">agent/</span>                    <span class="comment"># Legacy agentic loop (unused)</span>
 ├── <span class="folder">tests/</span>
 ├── <span class="file">.env</span>                      <span class="comment"># API keys</span>
@@ -1344,59 +1346,70 @@ response = cerebras.chat(
 │   ├── <span class="hl">App.jsx</span>               <span class="comment"># Router setup</span>
 │   ├── <span class="hl">index.css</span>             <span class="comment"># Global dark theme styles</span>
 │   ├── <span class="folder">api/</span>
-│   │   └── <span class="hl">client.js</span>         <span class="comment"># API calls + analysisCache</span>
+│   │   └── <span class="hl">client.js</span>         <span class="comment"># API client + localStorage persistence</span>
 │   ├── <span class="folder">pages/</span>
-│   │   ├── <span class="hl">HomePage.jsx</span>      <span class="comment"># Landing page</span>
-│   │   └── <span class="hl">WikiPage.jsx</span>      <span class="comment"># Full-screen wiki</span>
+│   │   ├── <span class="hl">HomePage.jsx</span>      <span class="comment"># Landing page + recent repos + popular repos</span>
+│   │   └── <span class="hl">WikiPage.jsx</span>      <span class="comment"># Analysis viewer + file tree + relevant files</span>
 │   └── <span class="folder">components/</span>
 │       ├── <span class="hl">Header.jsx</span>        <span class="comment"># Only on HomePage</span>
-│       ├── <span class="hl">WikiTreeView.jsx</span>  <span class="comment"># Folder tree nav</span>
+│       ├── <span class="hl">WikiTreeView.jsx</span>  <span class="comment"># Section navigation sidebar</span>
+│       ├── <span class="hl">FileTreeView.jsx</span>  <span class="comment"># Collapsible file tree viewer</span>
 │       ├── <span class="hl">MarkdownRenderer.jsx</span> <span class="comment"># Markdown to HTML</span>
 │       ├── <span class="hl">MermaidDiagram.jsx</span>   <span class="comment"># Zoom/pan/fullscreen</span>
-│       └── <span class="hl">ChatPanel.jsx</span>     <span class="comment"># Bottom chat panel</span>
+│       └── <span class="hl">ChatPanel.jsx</span>     <span class="comment"># Streaming chat with memory</span>
             </div>
         </div>
     </div>
 </section>
 
-<!-- ════════════════ DOCKER ════════════════ -->
-<section id="docker">
-    <h2><span class="num">15</span> Docker &amp; Deployment</h2>
-    <p>Production-ready setup with Docker Compose. One command to start all services.</p>
+<!-- ════════════════ DEPLOYMENT ════════════════ -->
+<section id="deployment">
+    <h2><span class="num">15</span> Deployment</h2>
+    <p>Local development setup. Docker deployment planned for future.</p>
 
-    <div class="card-glow">
-        <div class="arch-diagram">
-            <div class="arch-box" style="background: linear-gradient(135deg, #3b82f6, #60a5fa); color: white;">docker compose up</div>
-            <div class="arrow">&darr;</div>
-            <div style="display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center;">
-                <div class="arch-box" style="background: linear-gradient(135deg, #10b981, #34d399); color: white;">FastAPI API<small>Port 8000</small></div>
-                <div class="arch-box" style="background: linear-gradient(135deg, #64748b, #94a3b8); color: white;">PostgreSQL<small>Cache (optional)</small></div>
-                <div class="arch-box" style="background: linear-gradient(135deg, #ec4899, #f472b6); color: white;">React Frontend<small>Port 5173</small></div>
-            </div>
-        </div>
+    <h3>Backend</h3>
+    <div class="card">
+        <pre><span class="comment"># 1. Navigate to backend</span>
+<span class="keyword">cd</span> codelens/backend
+
+<span class="comment"># 2. Create virtual environment</span>
+python -m venv .venv
+.venv\Scripts\activate        <span class="comment"># Windows</span>
+<span class="comment"># source .venv/bin/activate  # macOS/Linux</span>
+
+<span class="comment"># 3. Install dependencies</span>
+pip install -r requirements.txt
+
+<span class="comment"># 4. Configure .env</span>
+<span class="comment"># CEREBRAS_API_KEY=your_key</span>
+<span class="comment"># DATABASE_URL=postgresql://... (optional)</span>
+
+<span class="comment"># 5. Start server (use python -m, NOT bare uvicorn)</span>
+python -m uvicorn api:app --reload --port 8000</pre>
+    </div>
+
+    <h3>Frontend</h3>
+    <div class="card">
+        <pre><span class="comment"># 1. Navigate to frontend</span>
+<span class="keyword">cd</span> codelens/frontend
+
+<span class="comment"># 2. Install dependencies</span>
+npm install
+
+<span class="comment"># 3. Start dev server</span>
+npm run dev
+<span class="comment"># Opens at http://localhost:5173</span></pre>
     </div>
 
     <h3>Services</h3>
     <table>
-        <thead><tr><th>Service</th><th>Image</th><th>Port</th><th>Purpose</th></tr></thead>
+        <thead><tr><th>Service</th><th>Port</th><th>Purpose</th></tr></thead>
         <tbody>
-            <tr><td><code class="mono">api</code></td><td>FastAPI</td><td>8000</td><td>REST API endpoints</td></tr>
-            <tr><td><code class="mono">postgres</code></td><td>PostgreSQL 15</td><td>5432</td><td>Analysis cache (optional)</td></tr>
-            <tr><td><code class="mono">frontend</code></td><td>React + Vite</td><td>5173</td><td>User interface</td></tr>
+            <tr><td><code class="mono">backend</code></td><td>8000</td><td>FastAPI REST API + WebSocket</td></tr>
+            <tr><td><code class="mono">frontend</code></td><td>5173</td><td>React SPA (Vite dev server)</td></tr>
+            <tr><td><code class="mono">postgres</code></td><td>5432</td><td>PostgreSQL cache (optional)</td></tr>
         </tbody>
     </table>
-
-    <h3>Quick Start</h3>
-    <div class="card">
-        <pre><span class="comment"># 1. Clone the repository</span>
-git clone https://github.com/yourusername/codelens.git
-<span class="keyword">cd</span> codelens
-
-<span class="comment"># 2. Configure environment</span>
-<span class="keyword">echo</span> <span class="string">"CEREBRAS_API_KEY=your_key"</span> > .env
-
-<span class="comment"># 3. Start all services</span>
-docker compose up -d
 
 <span class="comment"># 4. Access the application</span>
 <span class="comment"># Frontend: http://localhost:5173</span>
@@ -1408,37 +1421,23 @@ docker compose up -d
 <!-- ════════════════ MONITORING ════════════════ -->
 <section id="monitoring">
     <h2><span class="num">16</span> Observability &amp; Monitoring</h2>
-    <p>Prometheus + Grafana for metrics, dashboards, and alerting.</p>
+    <p>Basic health check endpoint. Full monitoring stack planned for future.</p>
 
-    <div class="grid-2">
-        <div class="card">
-            <h3>Prometheus Metrics</h3>
-            <p>Collects metrics from all services:</p>
-            <ul style="list-style: none; padding: 0;">
-                <li style="padding: 0.3rem 0; color: var(--text-secondary);">✓ API request rate &amp; latency</li>
-                <li style="padding: 0.3rem 0; color: var(--text-secondary);">✓ LLM response time</li>
-            </ul>
-        </div>
-        <div class="card">
-            <h3>Grafana Dashboards</h3>
-            <p>Pre-configured dashboards:</p>
-            <ul style="list-style: none; padding: 0;">
-                <li style="padding: 0.3rem 0; color: var(--text-secondary);">✓ Real-time API metrics</li>
-                <li style="padding: 0.3rem 0; color: var(--text-secondary);">✓ Error rate tracking</li>
-                <li style="padding: 0.3rem 0; color: var(--text-secondary);">✓ Performance trends</li>
-            </ul>
-        </div>
+    <div class="card">
+        <h3>Current: Health Check</h3>
+        <p><code class="mono">GET /api/health</code> returns system status (DB available, Cerebras configured, etc.).</p>
     </div>
 
-    <h3>Architecture</h3>
     <div class="card">
-        <pre>┌─────────────────────────────────────────────────────────────┐
-│                    OBSERVABILITY STACK                        │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  FastAPI ──→ /metrics ──→ Prometheus ──→ Grafana            │
-│                                                              │
-│  Metrics collected:                                         │
+        <h3>Future: Monitoring Stack</h3>
+        <p>Prometheus + Grafana for metrics, dashboards, and alerting:</p>
+        <ul style="list-style: none; padding: 0;">
+            <li style="padding: 0.3rem 0; color: var(--text-secondary);">○ API request rate &amp; latency</li>
+            <li style="padding: 0.3rem 0; color: var(--text-secondary);">○ LLM response time</li>
+            <li style="padding: 0.3rem 0; color: var(--text-secondary);">○ Error rate tracking</li>
+            <li style="padding: 0.3rem 0; color: var(--text-secondary);">○ Performance trends</li>
+        </ul>
+    </div>
 │  • http_requests_total (counter)                            │
 │  • http_request_duration_seconds (histogram)                │
 │  • llm_response_duration_seconds (histogram)                │
@@ -1505,7 +1504,7 @@ npm run build</pre>
 
     <div class="card">
         <h4>Q1: Walk me through the high-level architecture of this project.</h4>
-        <p>CodeLens is a three-tier system: <strong>React/Vite SPA</strong> (frontend) &rarr; <strong>FastAPI backend</strong> (orchestration) &rarr; <strong>External services</strong> (Git Clone, Cerebras LLM, PostgreSQL). The frontend sends a GitHub URL to the backend. The backend shallow-clones the repository, reads all files locally, builds a 4-layer hierarchical index (file metadata, AST structure, dependency graph, code chunks), generates 5 analysis sections with a single LLM call, caches the result in PostgreSQL, and returns it. For chat, the 4-layer index provides efficient context: Layers 1-2 (always sent) give full codebase awareness (~3K tokens), while Layers 3-4 (embeddings search) retrieve only relevant code (~5K tokens). The frontend renders it as a wiki page with zoomable Mermaid diagrams and markdown content.</p>
+        <p>CodeLens is a three-tier system: <strong>React/Vite SPA</strong> (frontend) &rarr; <strong>FastAPI backend</strong> (orchestration) &rarr; <strong>External services</strong> (Git Clone, Cerebras LLM, PostgreSQL). The frontend sends a GitHub URL to the backend. The backend shallow-clones the repository, reads all files locally, builds a 4-layer hierarchical index (file metadata, AST structure, dependency graph, code chunks), generates 5 analysis sections with a single LLM call, caches the result in PostgreSQL (or JSON file fallback), and returns it. The frontend renders it as a wiki page with real file tree from git clone, per-section relevant files (topic-based assignment), inline source citations, and a chat panel with streaming. For chat, the 4-layer index provides efficient context: Layers 1-2 (always sent) give full codebase awareness (~3K tokens), while Layers 3-4 (embeddings search) retrieve only relevant code (~5K tokens).</p>
     </div>
 
     <div class="card">
@@ -1525,7 +1524,7 @@ npm run build</pre>
 
     <div class="card">
         <h4>Q5: What improvements have been made since the initial version?</h4>
-        <p>(1) <strong>Streaming:</strong> Implemented SSE and WebSocket streaming for real-time token-by-token output. (2) <strong>4-layer RAG:</strong> Smart query detection (summary vs specific) with optimal layer selection. (3) <strong>Conversation memory:</strong> Last 4 exchanges for follow-up context. (4) <strong>Config files in index:</strong> .gitignore, package.json, etc. now indexed for complete context. (5) <strong>Shallow git clone:</strong> Replaced GitHub REST API with local filesystem reads for complete file access.</p>
+        <p>(1) <strong>Streaming:</strong> Implemented SSE and WebSocket streaming for real-time token-by-token output. (2) <strong>4-layer RAG:</strong> Smart query detection (summary vs specific) with optimal layer selection. (3) <strong>Conversation memory:</strong> Last 4 exchanges for follow-up context. (4) <strong>Config files in index:</strong> .gitignore, package.json, etc. now indexed for complete context. (5) <strong>Shallow git clone:</strong> Replaced GitHub REST API with local filesystem reads for complete file access. (6) <strong>Per-section relevant files:</strong> Topic-based file assignment (not content scanning) for each wiki section. (7) <strong>File tree viewer:</strong> Real directory tree from git clone (FileTreeView component). (8) <strong>JSON file cache:</strong> Fallback to ~/.codelens/cache/ when PostgreSQL unavailable. (9) <strong>Inline source citations:</strong> File paths in LLM output linked to GitHub URLs. (10) <strong>localStorage recent repos:</strong> Recently analyzed repos with timestamps and delete. (11) <strong>Commit hash tracking:</strong> Each analysis pinned to specific git commit.</p>
     </div>
 
     <!-- ── BACKEND ── -->
@@ -1543,12 +1542,12 @@ npm run build</pre>
 
     <div class="card">
         <h4>Q8: Explain the database schema and why you chose that design.</h4>
-        <p>Single table <code class="mono">repo_analysis</code> with <code class="mono">repo_url</code> as primary key. Each column stores one analysis section as TEXT. UPSERT on conflict updates all fields. <strong>Why TEXT type:</strong> Analysis sections can be long (markdown, mermaid code), and TEXT has no length limit. <strong>Why no normalized tables:</strong> The data is always accessed as a whole — we never query "just the tech stack for repo X". One row per repo is simpler and faster. <strong>Why no updated_at:</strong> Initial version had it but the column wasn't being set, causing INSERT failures. Removed it since <code class="mono">created_at</code> is sufficient for cache invalidation.</p>
+        <p>Single table <code class="mono">repo_analysis</code> with <code class="mono">repo_url</code> as primary key. Each column stores one analysis section as TEXT. UPSERT on conflict updates all fields. <strong>Metadata JSONB column:</strong> Stores per-section relevant files, commit hash, and file tree in a single JSONB column. Avoids schema changes when adding new metadata fields. <strong>Why TEXT type:</strong> Analysis sections can be long (markdown, mermaid code), and TEXT has no length limit. <strong>Why no normalized tables:</strong> The data is always accessed as a whole — we never query "just the tech stack for repo X". One row per repo is simpler and faster.</p>
     </div>
 
     <div class="card">
         <h4>Q9: Why is the database optional? How does the fallback work?</h4>
-        <p>For local development, requiring PostgreSQL adds setup friction. The system checks: (1) Is psycopg2 installed? (2) Can we connect? If either fails, <code class="mono">DB_AVAILABLE = False</code>. Every DB operation checks this flag and returns <code class="mono">None</code> or skips silently. The frontend cache (<code class="mono">analysisCache</code> Map) prevents duplicate requests within a session. Without DB, each page load regenerates the analysis (~15 sec), but it works.</p>
+        <p>For local development, requiring PostgreSQL adds setup friction. The system checks: (1) Is psycopg2 installed? (2) Can we connect? If either fails, <code class="mono">DB_AVAILABLE = False</code>. Every DB operation checks this flag and returns <code class="mono">None</code> or skips silently. <strong>JSON file cache fallback:</strong> When PostgreSQL unavailable, analyses are cached as JSON files in <code class="mono">~/.codelens/cache/</code> (SHA-256 hash of repo URL as filename). Provides the same persistence with zero configuration. The frontend <code class="mono">analysisCache</code> Map and localStorage recent repos also prevent duplicate requests.</p>
     </div>
 
     <div class="card">
@@ -1594,7 +1593,7 @@ npm run build</pre>
 
     <div class="card">
         <h4>Q17: How does the frontend prevent duplicate API calls?</h4>
-        <p><code class="mono">api/client.js</code> maintains an in-memory <code class="mono">analysisCache</code> (a <code class="mono">Map</code>). Before every fetch, it checks if the URL+forceRefresh key exists in the cache. If yes, returns the cached result. If no, fetches and stores. <strong>Also:</strong> React StrictMode was removed from <code class="mono">main.jsx</code> because it causes double-rendering in dev mode, which triggers duplicate API calls. The cache key includes <code class="mono">force_refresh</code> so manual refreshes bypass it.</p>
+        <p><code class="mono">api/client.js</code> maintains an in-memory <code class="mono">analysisCache</code> (a <code class="mono">Map</code>). Before every fetch, it checks if the URL+forceRefresh key exists in the cache. If yes, returns the cached result. If no, fetches and stores. <strong>localStorage recent repos:</strong> <code class="mono">getRecentReposList()</code> stores recently analyzed repos with timestamps in localStorage (max 20 entries). Homepage shows these for quick re-access. <strong>Also:</strong> React StrictMode was removed from <code class="mono">main.jsx</code> because it causes double-rendering in dev mode, which triggers duplicate API calls.</p>
     </div>
 
     <div class="card">
@@ -1722,7 +1721,7 @@ npm run build</pre>
 
     <div class="card">
         <h4>Q39: What monitoring/observability is in place?</h4>
-        <p><strong>Prometheus + Grafana</strong> are configured: (1) <strong>Metrics:</strong> HTTP request rate, latency histograms, LLM response time. (2) <strong>Grafana dashboards:</strong> Pre-built dashboards for real-time API metrics, error rate tracking. (3) <strong>Docker Compose:</strong> Prometheus and Grafana can run as services alongside the API. (4) <strong>Health checks:</strong> <code class="mono">/api/health</code> endpoint verifies system status. <strong>Future additions:</strong> Structured logging (replace print statements), OpenTelemetry distributed tracing, Sentry error tracking.</p>
+        <p><strong>Current:</strong> <code class="mono">/api/health</code> endpoint returns system status (DB available, Cerebras configured). <strong>Planned:</strong> Prometheus + Grafana for metrics (HTTP request rate, latency histograms, LLM response time), pre-built dashboards, and alerting. <strong>Future additions:</strong> Structured logging (replace print statements), OpenTelemetry distributed tracing, Sentry error tracking.</p>
     </div>
 
     <!-- ── CODE QUALITY ── -->

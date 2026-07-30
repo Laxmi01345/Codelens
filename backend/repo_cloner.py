@@ -242,4 +242,14 @@ def get_repo_info(repo_path: str) -> dict:
     if branch_result.returncode == 0:
         info["default_branch"] = branch_result.stdout.strip()
 
+    # Get commit hash
+    commit_result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        capture_output=True, text=True, cwd=repo_path, timeout=10,
+    )
+    if commit_result.returncode == 0:
+        info["commit_hash"] = commit_result.stdout.strip()[:8]
+    else:
+        info["commit_hash"] = ""
+
     return info

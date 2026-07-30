@@ -120,9 +120,10 @@ async def generate_repo_analysis(repo_url: str, force_refresh: bool = False) -> 
     # Step 4: Build 4-layer context for documentation prompt
     print("[Main] Building 4-layer context for documentation...")
     from analysis.query_builder import build_4layer_context
-    doc_context = build_4layer_context(index, "Generate comprehensive documentation for this repository", repo_url)
+    doc_context, doc_relevant_files = build_4layer_context(index, "Generate comprehensive documentation for this repository", repo_url)
     repo_data["four_layer_context"] = doc_context
-    print(f"[Main] 4-layer context length: {len(doc_context)} chars")
+    repo_data["relevant_files"] = doc_relevant_files
+    print(f"[Main] 4-layer context length: {len(doc_context)} chars, {len(doc_relevant_files)} relevant files")
 
     # Step 5: Analyze all sections (single LLM call with 4-layer context)
     print("[Main] Analyzing repository (single LLM call with 4-layer context)...")
@@ -130,6 +131,11 @@ async def generate_repo_analysis(repo_url: str, force_refresh: bool = False) -> 
         sections = analyze_all_sections(repo_data)
     except Exception as e:
         raise Exception(f"Analysis failed: {str(e)}")
+
+    # Step 5.5: Attach relevant source files metadata, commit hash, and file tree
+    sections["_relevant_files"] = repo_data.get("relevant_files", [])
+    sections["_commit_hash"] = repo_data.get("repo_info", {}).get("commit_hash", "")
+    sections["_file_tree"] = repo_data.get("file_tree", {})
 
     # Step 4: Store in database (optional)
     print("[Main] Storing results...")
@@ -199,7 +205,7 @@ async def chat_with_repo(
     index = _code_index_cache[repo_url]
 
     # Build 4-layer context
-    context = build_4layer_context(index, question, repo_url)
+    context, _ = build_4layer_context(index, question, repo_url)
     print(f"[Chat] Context length: {len(context)} chars")
 
     # Check if question is about issues

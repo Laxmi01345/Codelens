@@ -209,9 +209,13 @@ def build_4layer_context(
     index: CodeIndex,
     question: str,
     repo_url: str = "",
-) -> str:
+) -> tuple[str, list[dict]]:
     """
     Build complete 4-layer context for LLM.
+    
+    Returns:
+        Tuple of (context_string, relevant_files) where relevant_files is a list
+        of dicts with file metadata and relevance scores.
     
     Smart layer selection based on query type:
     - Summary queries: Only Layers 1-2 (~3K tokens)
@@ -221,6 +225,8 @@ def build_4layer_context(
     query_type = detect_query_type(question)
     
     context_parts = []
+    relevant_files = []
+    seen_files = set()
     
     # Add repo URL if provided
     if repo_url:
@@ -230,11 +236,36 @@ def build_4layer_context(
     layer1 = build_layer1(index)
     if layer1:
         context_parts.append(layer1)
+        # All files are relevant for Layer 1
+        for f in index.get_all_files():
+            if f["path"] not in seen_files:
+                relevant_files.append({
+                    "path": f["path"],
+                    "language": f["language"],
+                    "size": f["size"],
+                    "line_count": f["line_count"],
+                    "source": "file_metadata",
+                })
+                seen_files.add(f["path"])
     
     # Layer 2: AST Structure (ALWAYS)
     layer2 = build_layer2(index)
     if layer2:
         context_parts.append(layer2)
+        # Files with AST structures are relevant
+        for ast in index.get_all_asts():
+            fp = ast["file_path"]
+            if fp not in seen_files:
+                relevant_files.append({
+                    "path": fp,
+                    "language": "",
+                    "size": 0,
+                    "line_count": 0,
+                    "source": "ast_structure",
+                    "ast_name": ast["name"],
+                    "ast_type": ast["type"],
+                })
+                seen_files.add(fp)
     
     # Layers 3-4: Only for specific queries
     if query_type == "specific":
@@ -245,10 +276,39 @@ def build_4layer_context(
         layer3 = build_layer3(index, keywords)
         if layer3:
             context_parts.append(layer3)
+            # Files in dependency graph are relevant
+            for keyword in keywords:
+                importers = index.get_importers(keyword)
+                imports = index.get_imports(keyword)
+                for fp in importers + imports:
+                    if fp not in seen_files:
+                        relevant_files.append({
+                            "path": fp,
+                            "language": "",
+                            "size": 0,
+                            "line_count": 0,
+                            "source": "dependency_graph",
+                        })
+                        seen_files.add(fp)
         
         # Layer 4: Code Chunks (QUESTION-DRIVEN)
         layer4 = build_layer4(index, question, limit=5)
         if layer4:
             context_parts.append(layer4)
+            # Chunks with high relevance scores are relevant
+            chunks = index.search_chunks(question, limit=5)
+            for chunk in chunks:
+                fp = chunk["file"]
+                if fp not in seen_files:
+                    relevant_files.append({
+                        "path": fp,
+                        "language": "",
+                        "size": 0,
+                        "line_count": 0,
+                        "source": "semantic_search",
+                        "relevance_score": chunk["score"],
+                        "chunk_name": chunk["name"],
+                    })
+                    seen_files.add(fp)
     
-    return "\n\n".join(context_parts)
+    return "\n\n".join(context_parts), relevant_files

@@ -63,21 +63,24 @@ async def health_check():
 
 
 # Analysis endpoint
-@app.post("/api/analysis", response_model=AnalysisResponse)
+@app.post("/api/analysis")
 async def analyze_repository(request: AnalysisRequest):
     """Generate or retrieve repository analysis."""
     try:
         result = await generate_repo_analysis(
             request.repo_url, force_refresh=request.force_refresh
         )
-        return AnalysisResponse(
-            repo_url=request.repo_url,
-            purpose_scope=result.get("purpose_scope", ""),
-            repo_layout=result.get("repo_layout", ""),
-            source_layer=result.get("source_layer", ""),
-            tech_stack=result.get("tech_stack", ""),
-            architecture_text=result.get("architecture_text", ""),
-        )
+        # Return full result including _relevant_files and _commit_hash
+        return {
+            "repo_url": request.repo_url,
+            "purpose_scope": result.get("purpose_scope", ""),
+            "repo_layout": result.get("repo_layout", ""),
+            "source_layer": result.get("source_layer", ""),
+            "tech_stack": result.get("tech_stack", ""),
+            "architecture_text": result.get("architecture_text", ""),
+            "_relevant_files": result.get("_relevant_files", []),
+            "_commit_hash": result.get("_commit_hash", ""),
+        }
     except GitHubAccessError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
